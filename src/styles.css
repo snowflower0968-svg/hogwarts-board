@@ -131,6 +131,8 @@ button{cursor:pointer;}
 .bottom-input-bar textarea{flex:1;border:1px solid var(--border);border-radius:22px;padding:14px 20px;font-size:15px;line-height:1.5;outline:none;background:var(--surface-3);color:var(--text);min-width:0;resize:none;max-height:140px;overflow-y:auto;font-family:inherit;}
 .bottom-input-bar textarea:focus{border-color:var(--accent);background:var(--surface);}
 .bottom-input-bar button{border:none;background:var(--accent);color:#fff;border-radius:22px;padding:0 22px;height:48px;font-size:14px;font-weight:700;white-space:nowrap;flex-shrink:0;}
+.chat-input-buttons{display:flex;gap:8px;flex-shrink:0;}
+.chat-input-buttons .gift-btn{background:var(--gold);}
 .bottom-input-bar .expired-note{max-width:640px;margin:0 auto;padding:14px 18px;font-size:12.5px;color:var(--text-light);text-align:center;}
 
 .tab-row{display:flex;gap:4px;padding:16px 4px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;}
@@ -208,6 +210,10 @@ button{cursor:pointer;}
   .sidebar.open{transform:translateX(0);}
   .main{margin-left:0;}
   .bottom-input-bar{left:0;}
+  .bottom-input-bar .inner{padding:10px 12px;gap:6px;}
+  .bottom-input-bar button{padding:0 14px;height:44px;font-size:12.5px;}
+  .bottom-input-bar textarea{padding:11px 14px;font-size:14px;}
+  .chat-input-buttons{gap:5px;}
   .fab{right:20px;}
   .toast-stack{right:12px;left:12px;max-width:none;bottom:16px;}
   .char-chip{padding:5px 9px;font-size:11.5px;gap:4px;}

@@ -39,6 +39,7 @@ export function notifText(n) {
   if (n.type === 'gift') return `포인트 ${n.points || 0} 선물 도착`;
   if (n.type === 'comment_on_post') return '내 글에 댓글이 달렸습니다.';
   if (n.type === 'reply_to_comment') return '내 댓글에 답글이 달렸습니다.';
+  if (n.type === 'chat_message') return '새 메시지가 도착했습니다.';
   return '알림';
 }
 export function playNotifSound() {

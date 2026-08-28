@@ -82,6 +82,7 @@ export default function App() {
     if (n.type === 'gift') return `포인트 ${n.points || 0} 선물 도착`;
     if (n.type === 'comment_on_post') return '내 글에 댓글이 달렸습니다.';
     if (n.type === 'reply_to_comment') return '내 댓글에 답글이 달렸습니다.';
+    if (n.type === 'chat_message') return '새 메시지가 도착했습니다.';
     return '알림';
   }
 
@@ -113,6 +114,7 @@ export default function App() {
   function openNotif(n) {
     setNotifOpen(false);
     if ((n.type === 'comment_on_post' || n.type === 'reply_to_comment') && n.post_id) openPost(n.post_id);
+    else if (n.type === 'chat_message' && n.room_id) openChatRoomById(n.room_id);
     else if (n.type === 'gift' && n.room_id) openChatRoomById(n.room_id);
   }
 
@@ -196,6 +198,11 @@ export default function App() {
   // ---------------- chat ----------------
   const loadChat = useCallback(async (roomId) => {
     const [room, msgs] = await Promise.all([api.fetchChatRoom(roomId), api.fetchChatMessages(roomId)]);
+    if (room && new Date(room.expires_at).getTime() <= Date.now()) {
+      await api.deleteExpiredChatRoom(roomId);
+      setChatRoom(null); setChatMessages([]);
+      return;
+    }
     setChatRoom(room); setChatMessages(msgs);
     api.markChatRead(roomId);
   }, []);

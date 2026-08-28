@@ -45,6 +45,7 @@ export default function PostDetail({ profile, profilesById, post, comments, onBa
         <div className="c-actions">
           {!isReply && <span onClick={() => { setReplyingTo(replyingTo === c.id ? null : c.id); setReplyText(''); }}>답글</span>}
           {mine && <span onClick={() => onDeleteComment(c.id)}>삭제</span>}
+          {!mine && profile.is_admin && <span onClick={() => onDeleteComment(c.id)} title="관리자 삭제">삭제(관리자)</span>}
         </div>
         {replyingTo === c.id && (
           <form className="reply-form" onSubmit={(e) => { e.preventDefault(); if (!replyText.trim()) return; onSubmitComment(replyText.trim(), c.id); setReplyText(''); setReplyingTo(null); }}>
@@ -72,6 +73,7 @@ export default function PostDetail({ profile, profilesById, post, comments, onBa
           </div>
           <div className="pd-actions">
             {isMine && <><button onClick={onEdit}>수정</button><button onClick={onDelete}>삭제</button></>}
+            {!isMine && profile.is_admin && <button onClick={onDelete} title="관리자 삭제">삭제(관리자)</button>}
             {profile.is_admin && <button onClick={onTogglePinned}>{post.pinned ? '공지 해제' : '공지 등록'}</button>}
           </div>
         </div>

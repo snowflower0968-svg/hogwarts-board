@@ -276,6 +276,17 @@ export async function fetchMyComments(id) {
   const titles = await titlesForPostIds(items.map((i) => i.post_id));
   return items.map((i) => ({ ...i, posts: { title: titles[i.post_id] } }));
 }
+export async function deleteExpiredChatRoom(roomId) {
+  try {
+    const [msgsSnap, readsSnap] = await Promise.all([
+      getDocs(collection(db, 'chatRooms', roomId, 'messages')),
+      getDocs(collection(db, 'chatRooms', roomId, 'reads')),
+    ]);
+    await Promise.all([...msgsSnap.docs, ...readsSnap.docs].map((d) => deleteDoc(d.ref)));
+    await deleteDoc(doc(db, 'chatRooms', roomId));
+  } catch (e) { /* best-effort cleanup */ }
+}
+
 export async function fetchMyChats(id) {
   const [snapA, snapB] = await Promise.all([
     getDocs(query(collection(db, 'chatRooms'), where('userA', '==', id), orderBy('createdAt', 'desc'))),
@@ -283,7 +294,13 @@ export async function fetchMyChats(id) {
   ]);
   const rooms = [...snapA.docs, ...snapB.docs].map((d) => ({ id: d.id, ...d.data() }));
   rooms.sort((a, b) => ts(b.createdAt) - ts(a.createdAt));
-  return Promise.all(rooms.map(async (r) => {
+  const now = Date.now();
+  const alive = [];
+  for (const r of rooms) {
+    if (ts(r.expiresAt) <= now) { deleteExpiredChatRoom(r.id); continue; }
+    alive.push(r);
+  }
+  return Promise.all(alive.map(async (r) => {
     const [msgsSnap, readsSnap] = await Promise.all([
       getDocs(collection(db, 'chatRooms', r.id, 'messages')),
       getDocs(collection(db, 'chatRooms', r.id, 'reads')),
@@ -373,8 +390,11 @@ export function subscribeChat(roomId, onChange) {
 export async function sendChatMessage(roomId, text) {
   const roomSnap = await getDoc(doc(db, 'chatRooms', roomId));
   if (!roomSnap.exists()) throw new Error('채팅방을 찾을 수 없습니다.');
-  if (roomSnap.data().expiresAt.toMillis() < Date.now()) throw new Error('대화 가능 시간이 종료되었습니다.');
+  const r = roomSnap.data();
+  if (r.expiresAt.toMillis() < Date.now()) throw new Error('대화 가능 시간이 종료되었습니다.');
   await addDoc(collection(db, 'chatRooms', roomId, 'messages'), { senderId: uid(), type: 'text', text, createdAt: serverTimestamp() });
+  const recipient = r.userA === uid() ? r.userB : r.userA;
+  await addDoc(collection(db, 'notifications'), { userId: recipient, type: 'chat_message', roomId, read: false, createdAt: serverTimestamp() });
 }
 export async function sendGift(roomId, amount) {
   const roomSnap = await getDoc(doc(db, 'chatRooms', roomId));
