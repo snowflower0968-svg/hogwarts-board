@@ -150,10 +150,20 @@ export default function App() {
   function openPost(id) { setCurrentPostId(id); setView('post'); }
 
   // ---------------- my page ----------------
+  const [myPageError, setMyPageError] = useState('');
   const loadMyPage = useCallback(async () => {
     if (!profile) return;
-    const [p, c, ch] = await Promise.all([api.fetchMyPosts(profile.id), api.fetchMyComments(profile.id), api.fetchMyChats(profile.id)]);
-    setMyPosts(p); setMyComments(c); setMyChats(ch);
+    setMyPageError('');
+    const results = await Promise.allSettled([api.fetchMyPosts(profile.id), api.fetchMyComments(profile.id), api.fetchMyChats(profile.id)]);
+    const [pR, cR, chR] = results;
+    const errors = results.filter((r) => r.status === 'rejected').map((r) => r.reason?.message || String(r.reason));
+    if (errors.length) {
+      console.error('마이페이지 데이터 로딩 실패:', results);
+      setMyPageError(errors.join(' / '));
+    }
+    setMyPosts(pR.status === 'fulfilled' ? pR.value : []);
+    setMyComments(cR.status === 'fulfilled' ? cR.value : []);
+    setMyChats(chR.status === 'fulfilled' ? chR.value : []);
   }, [profile]);
   useEffect(() => { if (profile && view === 'mypage') loadMyPage(); }, [profile, view, loadMyPage]);
 
@@ -285,7 +295,7 @@ export default function App() {
           )}
 
           {view === 'mypage' && (
-            <MyPage profile={profile} posts={myPosts} comments={myComments} chats={myChats}
+            <MyPage profile={profile} posts={myPosts} comments={myComments} chats={myChats} error={myPageError}
               openPost={openPost}
               onEditPost={(p) => { setEditingPost(p); setComposeOpen(true); }}
               onDeletePost={(p) => askConfirm('이 글을 삭제할까?', () => doDeletePost(p))}

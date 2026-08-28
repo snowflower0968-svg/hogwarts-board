@@ -7,13 +7,14 @@ function roomUnread(room, uid) {
   return (room.chat_messages || []).some((m) => m.sender_id !== uid && new Date(m.created_at).getTime() > lastRead);
 }
 
-export default function MyPage({ profile, posts, comments, chats, openPost, onEditPost, onDeletePost, onDeleteComment, onOpenChatRoom, initialTab = 'posts' }) {
+export default function MyPage({ profile, posts, comments, chats, openPost, onEditPost, onDeletePost, onDeleteComment, onOpenChatRoom, initialTab = 'posts', error }) {
   const [tab, setTab] = useState(initialTab);
   const hasUnread = chats.some((r) => roomUnread(r, profile.id));
 
   return (
     <>
       <div className="board-title-bar"><h2>마이페이지</h2><span className="count">{profile.character_name}{profile.house ? ' · ' + houseName(profile.house) : ''}</span></div>
+      {error && <div className="auth-error" style={{ margin: '12px 4px' }}>데이터 로딩 중 오류: {error}</div>}
       <div className="stat-row">
         <div className="stat-box"><div className="num gold">{profile.points}</div><div className="lbl">포인트</div></div>
         <div className="stat-box"><div className="num">{posts.length}</div><div className="lbl">쓴 글</div></div>
