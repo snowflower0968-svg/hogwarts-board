@@ -32,10 +32,17 @@ export default function PostDetail({ profile, profilesById, post, comments, onBa
   const anonMap = computeAnonMap(post, comments, profilesById);
   const topLevel = comments.filter((c) => !c.parent_id).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 
+  function getAllDescendants(rootId) {
+    const direct = comments.filter((c) => c.parent_id === rootId);
+    let all = [...direct];
+    direct.forEach((d) => { all = all.concat(getAllDescendants(d.id)); });
+    return all;
+  }
+
   function renderComment(c, isReply) {
     const mine = c.author_id === profile.id;
     const isOwnerOfPost = c.author_id === post.author_id;
-    const replies = isReply ? [] : comments.filter((r) => r.parent_id === c.id).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const descendants = isReply ? [] : getAllDescendants(c.id).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
     return (
       <div key={c.id} className={`comment-item ${isReply ? 'reply' : ''}`}>
         <div className="c-top">
@@ -58,7 +65,7 @@ export default function PostDetail({ profile, profilesById, post, comments, onBa
           )}
         </div>
         <div className="c-actions">
-          {!isReply && editingId !== c.id && <span onClick={() => { setReplyingTo(replyingTo === c.id ? null : c.id); setReplyText(''); }}>답글</span>}
+          {editingId !== c.id && <span onClick={() => { setReplyingTo(replyingTo === c.id ? null : c.id); setReplyText(''); }}>답글</span>}
           {mine && editingId !== c.id && <span onClick={() => { setEditingId(c.id); setEditText(c.content); }}>수정</span>}
           {mine && <span onClick={() => onDeleteComment(c.id)}>삭제</span>}
           {!mine && profile.is_admin && <span onClick={() => onDeleteComment(c.id)} title="관리자 삭제">삭제(관리자)</span>}
@@ -69,7 +76,7 @@ export default function PostDetail({ profile, profilesById, post, comments, onBa
             <button type="submit">등록</button>
           </form>
         )}
-        {!isReply && replies.map((r) => renderComment(r, true))}
+        {!isReply && descendants.map((r) => renderComment(r, true))}
       </div>
     );
   }
