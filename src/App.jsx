@@ -369,10 +369,37 @@ export default function App() {
 
 function CommentInputBar({ onSubmit }) {
   const [text, setText] = useState('');
+  const taRef = useRef(null);
+
+  function autoGrow(el) {
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+  }
+
+  function submit() {
+    if (!text.trim()) return;
+    onSubmit(text.trim());
+    setText('');
+    requestAnimationFrame(() => autoGrow(taRef.current));
+  }
+
   return (
     <div className="bottom-input-bar">
-      <form className="inner" onSubmit={(e) => { e.preventDefault(); if (!text.trim()) return; onSubmit(text.trim()); setText(''); }}>
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="댓글 남기기" autoComplete="off" />
+      <form className="inner" onSubmit={(e) => { e.preventDefault(); submit(); }}>
+        <textarea
+          ref={taRef}
+          rows={1}
+          value={text}
+          onChange={(e) => { setText(e.target.value); autoGrow(e.target); }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              submit();
+            }
+          }}
+          placeholder="댓글 남기기 (Shift+Enter로 줄바꿈)"
+        />
         <button type="submit">등록</button>
       </form>
     </div>
