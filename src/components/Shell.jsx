@@ -9,10 +9,18 @@ const BELL_SVG = (
   </svg>
 );
 
+const MENU_SVG = (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="3" y1="6" x2="21" y2="6" />
+    <line x1="3" y1="12" x2="21" y2="12" />
+    <line x1="3" y1="18" x2="21" y2="18" />
+  </svg>
+);
+
 export function Header({ profile, view, setView, unreadCount, notifOpen, setNotifOpen, onLogout, onMobileMenu }) {
   return (
     <div className="header">
-      <button className="mobile-menu-btn" onClick={onMobileMenu}>메뉴</button>
+      <button className="mobile-menu-btn" onClick={onMobileMenu} aria-label="메뉴">{MENU_SVG}</button>
       <div className="logo" onClick={() => setView('board')}>호그와트 익명 게시판</div>
       <div className="header-spacer" />
       <div className="header-right">

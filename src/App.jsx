@@ -398,7 +398,7 @@ function CommentInputBar({ onSubmit }) {
               submit();
             }
           }}
-          placeholder="댓글 남기기 (Shift+Enter로 줄바꿈)"
+          placeholder="댓글 남기기"
         />
         <button type="submit">등록</button>
       </form>

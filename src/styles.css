@@ -36,7 +36,7 @@ button{cursor:pointer;}
 .done-wrap p{font-size:13.5px;color:var(--text-mid);line-height:1.6;margin:0 0 20px;}
 
 .header{position:fixed;top:0;left:0;right:0;height:54px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 18px;z-index:200;gap:8px;}
-.mobile-menu-btn{display:none;background:none;border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12.5px;color:var(--text-mid);margin-right:10px;}
+.mobile-menu-btn{display:none;background:none;border:1px solid var(--border);border-radius:8px;padding:8px;font-size:12.5px;color:var(--text-mid);margin-right:10px;align-items:center;justify-content:center;}
 .logo{font-weight:700;font-size:17px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
 .header-spacer{flex:1;}
 .header-right{display:flex;align-items:center;gap:8px;flex-shrink:0;}
