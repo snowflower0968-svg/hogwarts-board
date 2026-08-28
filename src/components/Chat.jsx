@@ -16,7 +16,10 @@ export default function Chat({ profile, room, messages, onBack, onSend, onOpenGi
     if (!text.trim()) return;
     onSend(text.trim());
     setText('');
-    requestAnimationFrame(() => autoGrow(taRef.current));
+    requestAnimationFrame(() => {
+      autoGrow(taRef.current);
+      taRef.current?.focus();
+    });
   }
 
   return (

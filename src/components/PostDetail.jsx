@@ -19,9 +19,11 @@ function AuthorLabel({ post, authorId, anonMap, profilesById, profile, cls, onOp
   return <span className={`${cls} clickable`} onClick={() => onOpenChat(authorId)} title="메시지">{label}</span>;
 }
 
-export default function PostDetail({ profile, profilesById, post, comments, onBack, onLike, onDelete, onEdit, onTogglePinned, onOpenChat, onOpenIdentity, onSubmitComment, onDeleteComment }) {
+export default function PostDetail({ profile, profilesById, post, comments, onBack, onLike, onDelete, onEdit, onTogglePinned, onOpenChat, onOpenIdentity, onSubmitComment, onDeleteComment, onEditComment }) {
   const [replyingTo, setReplyingTo] = useState(null);
   const [replyText, setReplyText] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [editText, setEditText] = useState('');
 
   if (!post) return <div className="empty-state">삭제되었거나 존재하지 않는 글입니다.</div>;
 
@@ -41,9 +43,23 @@ export default function PostDetail({ profile, profilesById, post, comments, onBa
             cls={`c-author${isOwnerOfPost ? ' owner' : ''}`} onOpenChat={(id) => onOpenChat(post.id, id)} onOpenIdentity={onOpenIdentity} />
           <span className="c-time">{fmtTime(c.created_at)}</span>
         </div>
-        <div className="c-body">{c.content}</div>
+        <div className="c-body">
+          {editingId === c.id ? (
+            <form
+              className="reply-form"
+              onSubmit={(e) => { e.preventDefault(); if (!editText.trim()) return; onEditComment(c.id, editText.trim()); setEditingId(null); }}
+            >
+              <input value={editText} onChange={(e) => setEditText(e.target.value)} placeholder="댓글 수정" autoComplete="off" />
+              <button type="submit">저장</button>
+              <span onClick={() => setEditingId(null)} style={{ marginLeft: 8, cursor: 'pointer', fontSize: 11.5, color: 'var(--text-light)', alignSelf: 'center' }}>취소</span>
+            </form>
+          ) : (
+            <>{c.content}{c.updated_at ? <span style={{ color: 'var(--text-light)', fontSize: 11 }}> (수정됨)</span> : null}</>
+          )}
+        </div>
         <div className="c-actions">
-          {!isReply && <span onClick={() => { setReplyingTo(replyingTo === c.id ? null : c.id); setReplyText(''); }}>답글</span>}
+          {!isReply && editingId !== c.id && <span onClick={() => { setReplyingTo(replyingTo === c.id ? null : c.id); setReplyText(''); }}>답글</span>}
+          {mine && editingId !== c.id && <span onClick={() => { setEditingId(c.id); setEditText(c.content); }}>수정</span>}
           {mine && <span onClick={() => onDeleteComment(c.id)}>삭제</span>}
           {!mine && profile.is_admin && <span onClick={() => onDeleteComment(c.id)} title="관리자 삭제">삭제(관리자)</span>}
         </div>

@@ -25,8 +25,8 @@ export const HOUSES = [
 const BOARD_HOUSE = Object.fromEntries(BOARDS.map((b) => [b.id, b.house]));
 
 const CHAT_TTL_MS = 60 * 60 * 1000;
-const POST_REWARD = 2;
-const COMMENT_REWARD_EVERY = 5;
+const POST_REWARD = 5;
+const COMMENT_REWARD_EVERY = 2;
 const COMMENT_REWARD_AMOUNT = 1;
 const GAMBLE_OUTCOMES = [[10, 1], [5, 4], [3, 8], [2, 15], [1, 22], [-1, 22], [-2, 15], [-3, 8], [-5, 4], [-10, 1]];
 
@@ -129,6 +129,7 @@ export async function fetchComments(postId) {
   return snap.docs.map((d) => ({
     id: d.id, author_id: d.data().authorId, parent_id: d.data().parentId || null,
     content: d.data().content, created_at: ts(d.data().createdAt), reward_granted: d.data().rewardGranted || 0,
+    updated_at: d.data().updatedAt ? ts(d.data().updatedAt) : null,
   }));
 }
 export function subscribePost(postId, onChange) {
@@ -237,21 +238,21 @@ export async function deleteComment(postId, id) {
   const byAuthor = {};
   toRemove.forEach((c) => {
     const a = c.data.authorId;
-    byAuthor[a] = byAuthor[a] || { count: 0, points: 0 };
-    byAuthor[a].count += 1; byAuthor[a].points += c.data.rewardGranted || 0;
+    byAuthor[a] = (byAuthor[a] || 0) + 1;
   });
   await Promise.all(Object.keys(byAuthor).map(async (a) => {
     const uref = doc(db, 'users', a);
     const usnap = await getDoc(uref);
     if (!usnap.exists()) return;
     const cur = usnap.data();
-    await updateDoc(uref, {
-      commentCount: Math.max(0, (cur.commentCount || 0) - byAuthor[a].count),
-      points: Math.max(0, (cur.points || 0) - byAuthor[a].points),
-    });
+    await updateDoc(uref, { commentCount: Math.max(0, (cur.commentCount || 0) - byAuthor[a]) });
   }));
   await Promise.all(toRemove.map((c) => deleteDoc(c.ref)));
   await updateDoc(postRef, { commentCount: increment(-toRemove.length) });
+}
+
+export async function updateComment(postId, id, content) {
+  await updateDoc(doc(db, 'posts', postId, 'comments', id), { content, updatedAt: serverTimestamp() });
 }
 
 // ---------------- my page ----------------

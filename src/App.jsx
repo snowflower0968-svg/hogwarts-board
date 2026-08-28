@@ -298,6 +298,7 @@ export default function App() {
               onOpenIdentity={(id) => setIdentityUserId(id)}
               onSubmitComment={async (text, parentId) => { await api.addComment(post.id, parentId, text); const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh); loadPost(post.id); }}
               onDeleteComment={(id) => askConfirm('이 댓글을 삭제할까?', () => doDeleteComment({ id, post_id: post.id }))}
+              onEditComment={async (id, content) => { await api.updateComment(post.id, id, content); loadPost(post.id); }}
             />
           )}
 
