@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { HOUSES } from '../lib/api';
 import { boardName, fmtTime, houseName } from '../lib/helpers';
 import { fetchChatMessages } from '../lib/api';
+import { DigAdmin, DigLogsAdmin, ItemsAdmin, ItemLogsAdmin } from './AdminDig';
 
 function PointsRow({ u, onGrant }) {
   const [amt, setAmt] = useState('');
@@ -64,6 +65,10 @@ export default function Admin({ pendingUsers, allUsers, allPosts, allComments, g
         <div className={`tab-item ${tab === 'comments' ? 'active' : ''}`} onClick={() => setTab('comments')}>댓글 관리</div>
         <div className={`tab-item ${tab === 'gamble' ? 'active' : ''}`} onClick={() => setTab('gamble')}>도박 기록</div>
         <div className={`tab-item ${tab === 'chats' ? 'active' : ''}`} onClick={() => { setTab('chats'); setChatDetail(null); }}>채팅 관리</div>
+        <div className={`tab-item ${tab === 'dig' ? 'active' : ''}`} onClick={() => setTab('dig')}>간이 조사</div>
+        <div className={`tab-item ${tab === 'diglogs' ? 'active' : ''}`} onClick={() => setTab('diglogs')}>조사 기록</div>
+        <div className={`tab-item ${tab === 'items' ? 'active' : ''}`} onClick={() => setTab('items')}>소지품 관리</div>
+        <div className={`tab-item ${tab === 'itemlogs' ? 'active' : ''}`} onClick={() => setTab('itemlogs')}>소지품 기록</div>
       </div>
 
       {tab === 'approve' && (
@@ -132,6 +137,11 @@ export default function Admin({ pendingUsers, allUsers, allPosts, allComments, g
           </div>
         ))
       )}
+
+      {tab === 'dig' && <DigAdmin />}
+      {tab === 'diglogs' && <DigLogsAdmin />}
+      {tab === 'items' && <ItemsAdmin users={allUsers} />}
+      {tab === 'itemlogs' && <ItemLogsAdmin />}
 
       {tab === 'gamble' && (
         gambleLogs.length === 0 ? <div className="empty-state">도박 기록이 없습니다.</div> : gambleLogs.map((g) => (

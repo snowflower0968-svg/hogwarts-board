@@ -15,6 +15,7 @@ export const BOARDS = [
   { id: 'slytherin', name: '슬리데린', house: 'slytherin' },
   { id: 'ravenclaw', name: '래번클로', house: 'ravenclaw' },
   { id: 'hufflepuff', name: '후플푸프', house: 'hufflepuff' },
+  { id: 'anon', name: '익명방', house: null },
 ];
 export const HOUSES = [
   { id: 'gryffindor', name: '그리핀도르' },
@@ -30,8 +31,49 @@ const COMMENT_REWARD_EVERY = 2;
 const COMMENT_REWARD_AMOUNT = 1;
 const GAMBLE_OUTCOMES = [[10, 1], [5, 4], [3, 8], [2, 15], [1, 22], [-1, 22], [-2, 15], [-3, 8], [-5, 4], [-10, 1]];
 
+export const DIG_SIZE = 81;
+export const DIG_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2시간마다 1회 충전
+export const DIG_MAX_CHARGES = 3; // 최대 3회까지 누적
+
 function ts(t) { return t ? t.toMillis() : Date.now(); }
 function uid() { return auth.currentUser?.uid; }
+
+// ---- 간이 조사: 충전 계산 (순수 함수) ----
+// charges/atMs 가 비어 있으면(처음) 가입 시점 기준 1회 + 시간 경과분으로 계산
+export function chargeState(charges, atMs, createdMs, nowMs) {
+  let c = charges;
+  let at = atMs;
+  if (c === null || c === undefined) { c = 1; at = createdMs; }
+  if (at === null || at === undefined) at = nowMs;
+  if (c >= DIG_MAX_CHARGES) return { charges: DIG_MAX_CHARGES, at: nowMs, full: true };
+  const gained = Math.floor((nowMs - at) / DIG_INTERVAL_MS);
+  if (gained <= 0) return { charges: c, at, full: false };
+  const nc = c + gained;
+  if (nc >= DIG_MAX_CHARGES) return { charges: DIG_MAX_CHARGES, at: nowMs, full: true };
+  return { charges: nc, at: at + gained * DIG_INTERVAL_MS, full: false };
+}
+
+// 확률(가중치) 기반 랜덤 선택
+export function pickWeighted(list) {
+  const items = list.filter((r) => (Number(r.weight) || 0) > 0);
+  const total = items.reduce((sum, r) => sum + Number(r.weight), 0);
+  if (!total) return null;
+  let x = Math.random() * total;
+  for (const r of items) { x -= Number(r.weight); if (x < 0) return r; }
+  return items[items.length - 1];
+}
+
+// 같은 이름+효과의 소지품은 한 묶음(수량)으로 합쳐지도록 고정 ID 생성
+export function itemKey(name, description) {
+  const str = `${(name || '').trim()}|${(description || '').trim()}`;
+  let h1 = 5381; let h2 = 52711;
+  for (let i = 0; i < str.length; i += 1) {
+    const c = str.charCodeAt(i);
+    h1 = ((h1 * 33) ^ c) >>> 0;
+    h2 = ((h2 * 31) + c) >>> 0;
+  }
+  return `i_${h1.toString(36)}${h2.toString(36)}`;
+}
 
 // ---------------- auth ----------------
 export async function signUp(loginId, password, characterName) {
@@ -73,6 +115,7 @@ function mapUser(id, d) {
     approved: !!d.approved, rejected: !!d.rejected, house: d.house || null,
     points: d.points || 0, comment_count: d.commentCount || 0,
     sound_enabled: d.soundEnabled !== false, dark_mode: !!d.darkMode, created_at: ts(d.createdAt),
+    dig_charges: d.digCharges ?? null, dig_charge_at: d.digChargeAt ? ts(d.digChargeAt) : null,
   };
 }
 export async function fetchOwnProfile(id) {
@@ -104,6 +147,7 @@ function mapPost(id, d) {
     id, board_id: d.boardId, author_id: d.authorId, title: d.title, content: d.content,
     pinned: !!d.pinned, created_at: ts(d.createdAt), updated_at: d.updatedAt ? ts(d.updatedAt) : null,
     post_likes: Array(d.likeCount || 0), comments: Array(d.commentCount || 0),
+    image_count: d.imageCount || 0,
   };
 }
 export async function fetchPosts(boardId) {
@@ -148,17 +192,25 @@ export async function fetchProfilesByIds(ids) {
   return map;
 }
 
-export async function createPost(board, title, content) {
+export async function createPost(board, title, content, images = []) {
   const userRef = doc(db, 'users', uid());
   const userSnap = await getDoc(userRef);
   const u = userSnap.data();
   const reqHouse = BOARD_HOUSE[board];
   if (reqHouse && !u.isAdmin && u.house !== reqHouse) throw new Error('해당 기숙사 소속만 작성 가능합니다.');
-  await addDoc(collection(db, 'posts'), {
+  const imgs = (images || []).slice(0, 4);
+  const postRef = doc(collection(db, 'posts'));
+  // 사진은 글 문서와 분리해서 저장 (목록 조회가 무거워지지 않도록)
+  await Promise.all(imgs.map((data, i) => setDoc(doc(db, 'posts', postRef.id, 'images', String(i)), { idx: i, data, createdAt: serverTimestamp() })));
+  await setDoc(postRef, {
     boardId: board, authorId: uid(), title, content, pinned: false,
-    likeCount: 0, commentCount: 0, createdAt: serverTimestamp(), updatedAt: null,
+    likeCount: 0, commentCount: 0, imageCount: imgs.length, createdAt: serverTimestamp(), updatedAt: null,
   });
   await updateDoc(userRef, { points: increment(POST_REWARD) });
+}
+export async function fetchPostImages(postId) {
+  const snap = await getDocs(collection(db, 'posts', postId, 'images'));
+  return snap.docs.map((d) => ({ idx: d.data().idx ?? 0, data: d.data().data })).sort((a, b) => a.idx - b.idx).map((x) => x.data);
 }
 export async function updatePost(id, board, title, content) {
   await updateDoc(doc(db, 'posts', id), { boardId: board, title, content, updatedAt: serverTimestamp() });
@@ -180,7 +232,15 @@ export async function deletePost(id) {
   }
   await deleteSubcollection(collection(db, 'posts', id, 'likes'));
   await deleteSubcollection(collection(db, 'posts', id, 'comments'));
+  await deleteSubcollection(collection(db, 'posts', id, 'images'));
   await deleteDoc(ref);
+}
+export async function deletePosts(ids) {
+  for (const id of ids) {
+    // 순차 처리 (작성자 포인트 회수가 겹치지 않도록)
+    // eslint-disable-next-line no-await-in-loop
+    await deletePost(id);
+  }
 }
 export async function togglePinned(id) {
   const ref = doc(db, 'posts', id);
@@ -227,29 +287,35 @@ export async function addComment(postId, parentId, content) {
     await addDoc(collection(db, 'notifications'), { userId: notifTarget, type: notifType, postId, commentId: commentRef.id, read: false, createdAt: serverTimestamp() });
   }
 }
-export async function deleteComment(postId, id) {
+export async function deleteComments(postId, ids) {
   const postRef = doc(db, 'posts', postId);
-  const commentsCol = collection(db, 'posts', postId, 'comments');
-  const targetRef = doc(commentsCol, id);
-  const targetSnap = await getDoc(targetRef);
-  if (!targetSnap.exists()) return;
-  const repliesSnap = await getDocs(query(commentsCol, where('parentId', '==', id)));
-  const toRemove = [{ ref: targetRef, data: targetSnap.data() }, ...repliesSnap.docs.map((d) => ({ ref: d.ref, data: d.data() }))];
-  const byAuthor = {};
-  toRemove.forEach((c) => {
-    const a = c.data.authorId;
-    byAuthor[a] = (byAuthor[a] || 0) + 1;
+  const allSnap = await getDocs(collection(db, 'posts', postId, 'comments'));
+  const byId = new Map(allSnap.docs.map((d) => [d.id, d]));
+  const childrenOf = {};
+  allSnap.docs.forEach((d) => {
+    const p = d.data().parentId;
+    if (p) (childrenOf[p] = childrenOf[p] || []).push(d.id);
   });
+  const toRemove = new Set();
+  const walk = (cid) => {
+    if (toRemove.has(cid) || !byId.has(cid)) return;
+    toRemove.add(cid);
+    (childrenOf[cid] || []).forEach(walk);
+  };
+  ids.forEach(walk);
+  if (!toRemove.size) return;
+  const byAuthor = {};
+  toRemove.forEach((cid) => { const a = byId.get(cid).data().authorId; byAuthor[a] = (byAuthor[a] || 0) + 1; });
   await Promise.all(Object.keys(byAuthor).map(async (a) => {
     const uref = doc(db, 'users', a);
     const usnap = await getDoc(uref);
     if (!usnap.exists()) return;
-    const cur = usnap.data();
-    await updateDoc(uref, { commentCount: Math.max(0, (cur.commentCount || 0) - byAuthor[a]) });
+    await updateDoc(uref, { commentCount: Math.max(0, (usnap.data().commentCount || 0) - byAuthor[a]) });
   }));
-  await Promise.all(toRemove.map((c) => deleteDoc(c.ref)));
-  await updateDoc(postRef, { commentCount: increment(-toRemove.length) });
+  await Promise.all([...toRemove].map((cid) => deleteDoc(byId.get(cid).ref)));
+  await updateDoc(postRef, { commentCount: increment(-toRemove.size) });
 }
+export async function deleteComment(postId, id) { await deleteComments(postId, [id]); }
 
 export async function updateComment(postId, id, content) {
   await updateDoc(doc(db, 'posts', postId, 'comments', id), { content, updatedAt: serverTimestamp() });
@@ -383,6 +449,8 @@ export async function fetchChatMessages(roomId) {
   return snap.docs.map((d) => ({
     id: d.id, sender_id: d.data().senderId, type: d.data().type, text: d.data().text || null,
     amount: d.data().amount || null, status: d.data().status || null, created_at: ts(d.data().createdAt),
+    kind: d.data().kind || 'points', item_name: d.data().itemName || null,
+    item_description: d.data().itemDescription || null, qty: d.data().qty || null,
   }));
 }
 export function subscribeChat(roomId, onChange) {
@@ -408,13 +476,43 @@ export async function sendGift(roomId, amount) {
   if (bal < amount) throw new Error('보유 포인트가 부족합니다.');
   const recipient = r.userA === uid() ? r.userB : r.userA;
   await updateDoc(userRef, { points: bal - amount });
-  await addDoc(collection(db, 'chatRooms', roomId, 'messages'), { senderId: uid(), type: 'gift', amount, status: 'pending', createdAt: serverTimestamp() });
+  await addDoc(collection(db, 'chatRooms', roomId, 'messages'), { senderId: uid(), type: 'gift', kind: 'points', amount, status: 'pending', createdAt: serverTimestamp() });
   await addDoc(collection(db, 'notifications'), { userId: recipient, type: 'gift', points: amount, roomId, read: false, createdAt: serverTimestamp() });
+}
+export async function sendGiftItem(roomId, itemId, qtyRaw) {
+  const qty = parseInt(qtyRaw, 10);
+  if (!qty || qty <= 0) throw new Error('수량을 확인하세요.');
+  const roomSnap = await getDoc(doc(db, 'chatRooms', roomId));
+  if (!roomSnap.exists()) throw new Error('채팅방을 찾을 수 없습니다.');
+  const r = roomSnap.data();
+  if (r.expiresAt.toMillis() < Date.now()) throw new Error('대화 가능 시간이 종료되었습니다.');
+  const recipient = r.userA === uid() ? r.userB : r.userA;
+  const item = await removeItemFromUser(uid(), itemId, qty); // 보낸 순간 내 소지품에서 빠짐 (취소하면 돌아옴)
+  await addDoc(collection(db, 'chatRooms', roomId, 'messages'), {
+    senderId: uid(), type: 'gift', kind: 'item', itemName: item.name, itemDescription: item.description || '', qty, status: 'pending', createdAt: serverTimestamp(),
+  });
+  await addDoc(collection(db, 'notifications'), { userId: recipient, type: 'gift', itemName: item.name, qty, roomId, read: false, createdAt: serverTimestamp() });
 }
 export async function acceptGift(roomId, msgId) {
   const msgRef = doc(db, 'chatRooms', roomId, 'messages', msgId);
   const msgSnap = await getDoc(msgRef);
   if (!msgSnap.exists() || msgSnap.data().status !== 'pending') return;
+  const m = msgSnap.data();
+  if (m.senderId === uid()) return;
+  if (m.kind === 'item') {
+    const itemRef = doc(db, 'users', uid(), 'items', itemKey(m.itemName, m.itemDescription));
+    await runTransaction(db, async (tx) => {
+      const ms = await tx.get(msgRef);
+      const is = await tx.get(itemRef);
+      if (!ms.exists() || ms.data().status !== 'pending') throw new Error('이미 처리된 선물입니다.');
+      tx.update(msgRef, { status: 'accepted' });
+      if (is.exists()) tx.update(itemRef, { qty: increment(m.qty) });
+      else tx.set(itemRef, { name: m.itemName, description: m.itemDescription || '', qty: m.qty, createdAt: serverTimestamp() });
+    });
+    const [from, to] = await Promise.all([fetchProfileById(m.senderId), fetchProfileById(uid())]);
+    await logItem({ action: 'transfer', userId: m.senderId, userName: from?.character_name || '', targetUserId: uid(), targetName: to?.character_name || '', itemName: m.itemName, itemDescription: m.itemDescription || '', qty: m.qty });
+    return;
+  }
   const userRef = doc(db, 'users', uid());
   const userSnap = await getDoc(userRef);
   await updateDoc(msgRef, { status: 'accepted' });
@@ -425,6 +523,12 @@ export async function cancelGift(roomId, msgId) {
   const msgSnap = await getDoc(msgRef);
   if (!msgSnap.exists() || msgSnap.data().status !== 'pending') return;
   const m = msgSnap.data();
+  if (m.senderId !== uid()) return;
+  if (m.kind === 'item') {
+    await updateDoc(msgRef, { status: 'cancelled' });
+    await addItemToUser(m.senderId, m.itemName, m.itemDescription, m.qty);
+    return;
+  }
   const senderRef = doc(db, 'users', m.senderId);
   const senderSnap = await getDoc(senderRef);
   await updateDoc(msgRef, { status: 'cancelled' });
@@ -458,6 +562,7 @@ function mapNotif(d) {
   return {
     id: d.id, user_id: x.userId, type: x.type, points: x.points ?? null, message: x.message || null,
     post_id: x.postId || null, comment_id: x.commentId || null, room_id: x.roomId || null,
+    item_name: x.itemName || null, qty: x.qty ?? null,
     read: !!x.read, created_at: ts(x.createdAt),
   };
 }
@@ -537,3 +642,181 @@ export async function grantPoints(id, amount, message) {
 
 export async function signOutUser() { await fbSignOut(auth); }
 export function onAuthBoot(cb) { return onAuthStateChanged(auth, cb); }
+
+
+// ================= 소지품 =================
+async function logItem(entry) {
+  try { await addDoc(collection(db, 'itemLogs'), { ...entry, createdAt: serverTimestamp() }); } catch (e) { /* best-effort */ }
+}
+async function addItemToUser(userId, name, description, qty) {
+  const itemRef = doc(db, 'users', userId, 'items', itemKey(name, description));
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(itemRef);
+    if (snap.exists()) tx.update(itemRef, { qty: increment(qty) });
+    else tx.set(itemRef, { name: (name || '').trim(), description: (description || '').trim(), qty, createdAt: serverTimestamp() });
+  });
+}
+async function removeItemFromUser(userId, itemId, qty) {
+  const itemRef = doc(db, 'users', userId, 'items', itemId);
+  let item;
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(itemRef);
+    if (!snap.exists() || (snap.data().qty || 0) < qty) throw new Error('보유한 소지품 수량이 부족합니다.');
+    item = snap.data();
+    const left = item.qty - qty;
+    if (left <= 0) tx.delete(itemRef); else tx.update(itemRef, { qty: left });
+  });
+  return item;
+}
+export async function fetchItemsOf(userId) {
+  const snap = await getDocs(collection(db, 'users', userId, 'items'));
+  return snap.docs
+    .map((d) => ({ id: d.id, name: d.data().name, description: d.data().description || '', qty: d.data().qty || 0 }))
+    .filter((i) => i.qty > 0)
+    .sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+}
+export async function deleteMyItem(itemId, qtyRaw) {
+  const qty = parseInt(qtyRaw, 10);
+  if (!qty || qty <= 0) throw new Error('수량을 확인하세요.');
+  const me = await fetchOwnProfile(uid());
+  const item = await removeItemFromUser(uid(), itemId, qty);
+  await logItem({ action: 'user_delete', userId: uid(), userName: me?.character_name || '', itemName: item.name, itemDescription: item.description || '', qty });
+}
+export async function adminGrantItem(userId, name, description, qtyRaw, message) {
+  const qty = parseInt(qtyRaw, 10);
+  if (!name || !name.trim()) throw new Error('소지품 이름을 입력하세요.');
+  if (!qty || qty <= 0) throw new Error('수량을 확인하세요.');
+  await addItemToUser(userId, name, description, qty);
+  const target = await fetchProfileById(userId);
+  await logItem({ action: 'admin_grant', userId, userName: target?.character_name || '', itemName: name.trim(), itemDescription: (description || '').trim(), qty });
+  await addDoc(collection(db, 'notifications'), { userId, type: 'admin_item', message: `소지품 지급: ${name.trim()} x${qty}${message ? ' · ' + message : ''}`, read: false, createdAt: serverTimestamp() });
+}
+export async function adminRemoveItem(userId, itemId, qtyRaw, message) {
+  const qty = parseInt(qtyRaw, 10);
+  if (!qty || qty <= 0) throw new Error('수량을 확인하세요.');
+  const item = await removeItemFromUser(userId, itemId, qty);
+  const target = await fetchProfileById(userId);
+  await logItem({ action: 'admin_remove', userId, userName: target?.character_name || '', itemName: item.name, itemDescription: item.description || '', qty });
+  await addDoc(collection(db, 'notifications'), { userId, type: 'admin_item', message: `소지품 회수: ${item.name} x${qty}${message ? ' · ' + message : ''}`, read: false, createdAt: serverTimestamp() });
+}
+export async function fetchItemLogs() {
+  const snap = await getDocs(query(collection(db, 'itemLogs'), orderBy('createdAt', 'desc'), limit(300)));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data(), created_at: ts(d.data().createdAt) }));
+}
+
+// ================= 간이 조사 =================
+const pubRefOf = () => doc(db, 'dig', 'public');
+const secRefOf = () => doc(db, 'dig', 'secret');
+const blankPublicCells = () => Array.from({ length: DIG_SIZE }, () => ({ dug: false, name: '', description: '', empty: false }));
+const blankSecretCell = () => ({ assigned: false, rewardId: null, name: '', description: '', empty: false, by: null, byName: null, at: null });
+const cellFromReward = (r) => ({ assigned: true, rewardId: r.id, name: r.name, description: r.description || '', empty: !!r.empty, by: null, byName: null, at: null });
+const randomSecretCells = (catalog) => Array.from({ length: DIG_SIZE }, () => { const r = pickWeighted(catalog); return r ? cellFromReward(r) : blankSecretCell(); });
+
+export async function fetchDigRewards() {
+  const snap = await getDocs(collection(db, 'digRewards'));
+  return snap.docs
+    .map((d) => ({ id: d.id, name: d.data().name, description: d.data().description || '', weight: Number(d.data().weight) || 0, empty: !!d.data().empty, createdMs: d.data().createdAt ? ts(d.data().createdAt) : 0 }))
+    .sort((a, b) => a.createdMs - b.createdMs);
+}
+export async function saveDigReward(id, data) {
+  if (!data.name || !data.name.trim()) throw new Error('보상 이름을 입력하세요.');
+  const payload = { name: data.name.trim(), description: (data.description || '').trim(), weight: Number(data.weight) || 0, empty: !!data.empty };
+  if (id) await updateDoc(doc(db, 'digRewards', id), payload);
+  else await addDoc(collection(db, 'digRewards'), { ...payload, createdAt: serverTimestamp() });
+}
+export async function deleteDigReward(id) { await deleteDoc(doc(db, 'digRewards', id)); }
+
+export function subscribeDigPublic(cb) { return onSnapshot(pubRefOf(), (s) => cb(s.exists() ? s.data() : null), () => cb(null)); }
+export function subscribeDigSecret(cb) { return onSnapshot(secRefOf(), (s) => cb(s.exists() ? s.data() : null), () => cb(null)); }
+
+// 새 판 시작 (처음 시작 / 전체 랜덤 + 초기화)
+export async function adminNewRound() {
+  const catalog = await fetchDigRewards();
+  await runTransaction(db, async (tx) => {
+    const p = await tx.get(pubRefOf());
+    const round = (p.exists() ? (p.data().round || 1) : 0) + 1;
+    tx.set(pubRefOf(), { round, cells: blankPublicCells() });
+    tx.set(secRefOf(), { round, cells: randomSecretCells(catalog) });
+  });
+}
+export async function adminAssignCell(index, reward) {
+  await runTransaction(db, async (tx) => {
+    const p = await tx.get(pubRefOf());
+    const sc = await tx.get(secRefOf());
+    if (!p.exists() || !sc.exists()) throw new Error('먼저 "새 판 시작"을 눌러주세요.');
+    if (p.data().cells[index].dug) throw new Error('이미 조사된 칸은 바꿀 수 없습니다.');
+    const cells = sc.data().cells.slice();
+    cells[index] = reward ? cellFromReward(reward) : blankSecretCell();
+    tx.update(secRefOf(), { cells });
+  });
+}
+export async function adminRandomizeUndug() {
+  const catalog = await fetchDigRewards();
+  if (!catalog.some((r) => r.weight > 0)) throw new Error('확률이 0보다 큰 보상을 먼저 등록하세요.');
+  await runTransaction(db, async (tx) => {
+    const p = await tx.get(pubRefOf());
+    const sc = await tx.get(secRefOf());
+    if (!p.exists() || !sc.exists()) throw new Error('먼저 "새 판 시작"을 눌러주세요.');
+    const cells = sc.data().cells.slice();
+    p.data().cells.forEach((pc, i) => { if (!pc.dug) cells[i] = cellFromReward(pickWeighted(catalog)); });
+    tx.update(secRefOf(), { cells });
+  });
+}
+
+export async function digCell(index) {
+  const me = uid();
+  const catalog = await fetchDigRewards();
+  let result;
+  await runTransaction(db, async (tx) => {
+    const userRef = doc(db, 'users', me);
+    const p = await tx.get(pubRefOf());
+    const sc = await tx.get(secRefOf());
+    const us = await tx.get(userRef);
+    if (!p.exists() || !sc.exists()) throw new Error('간이 조사가 아직 열리지 않았습니다.');
+    const pub = p.data();
+    const sec = sc.data();
+    const u = us.data();
+    const now = Date.now();
+    const st = chargeState(u.digCharges ?? null, u.digChargeAt ? u.digChargeAt.toMillis() : null, u.createdAt ? u.createdAt.toMillis() : now, now);
+    if (st.charges < 1) throw new Error('조사 가능 횟수가 없습니다.');
+    if (pub.cells[index].dug) throw new Error('이미 조사된 칸입니다.');
+    const cells = sec.cells.slice();
+    let cell = { ...cells[index] };
+    if (!cell.assigned) {
+      const pick = pickWeighted(catalog);
+      if (!pick) throw new Error('이 칸은 아직 보상이 준비되지 않았습니다.');
+      cell = { ...cellFromReward(pick) };
+    }
+    const itemRef = doc(db, 'users', me, 'items', itemKey(cell.name, cell.description));
+    const itemSnap = cell.empty ? null : await tx.get(itemRef);
+    // ---- writes ----
+    const newPub = pub.cells.slice();
+    newPub[index] = { dug: true, name: cell.name, description: cell.description, empty: cell.empty };
+    cells[index] = { ...cell, by: me, byName: u.characterName, at: now };
+    const wasFull = st.charges >= DIG_MAX_CHARGES;
+    tx.update(userRef, { digCharges: st.charges - 1, digChargeAt: Timestamp.fromMillis(wasFull ? now : st.at) });
+    if (!cell.empty) {
+      if (itemSnap.exists()) tx.update(itemRef, { qty: increment(1) });
+      else tx.set(itemRef, { name: cell.name, description: cell.description, qty: 1, createdAt: serverTimestamp() });
+    }
+    const allDug = newPub.every((c) => c.dug);
+    const round = pub.round || 1;
+    if (allDug) {
+      tx.set(pubRefOf(), { round: round + 1, cells: blankPublicCells() });
+      tx.set(secRefOf(), { round: round + 1, cells: randomSecretCells(catalog) });
+    } else {
+      tx.update(pubRefOf(), { cells: newPub });
+      tx.update(secRefOf(), { cells });
+    }
+    result = { index, name: cell.name, description: cell.description, empty: cell.empty, reset: allDug, round, userName: u.characterName };
+  });
+  try {
+    await addDoc(collection(db, 'digLogs'), { userId: me, userName: result.userName, cell: result.index, rewardName: result.name, empty: result.empty, round: result.round, createdAt: serverTimestamp() });
+    if (!result.empty) await logItem({ action: 'dig_get', userId: me, userName: result.userName, itemName: result.name, itemDescription: result.description || '', qty: 1 });
+  } catch (e) { /* best-effort */ }
+  return result;
+}
+export async function fetchDigLogs() {
+  const snap = await getDocs(query(collection(db, 'digLogs'), orderBy('createdAt', 'desc'), limit(300)));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data(), created_at: ts(d.data().createdAt) }));
+}

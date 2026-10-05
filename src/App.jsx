@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as api from './lib/api';
-import { playNotifSound } from './lib/helpers';
+import { playNotifSound, notifText } from './lib/helpers';
 
 import { LoginScreen, SignupScreen, SignupDoneScreen } from './components/Auth';
 import { Header, NotifPanel, Sidebar } from './components/Shell';
@@ -12,7 +12,8 @@ import Chat from './components/Chat';
 import Settings from './components/Settings';
 import Admin from './components/Admin';
 import Toasts from './components/Toasts';
-import { ComposeModal, ConfirmModal, GiftModal, IdentityModal } from './components/Modals';
+import { ComposeModal, ConfirmModal, GiftModal, IdentityModal, ItemDeleteModal } from './components/Modals';
+import Dig from './components/Dig';
 
 export default function App() {
   const [profile, setProfile] = useState(null);
@@ -47,6 +48,10 @@ export default function App() {
   const [editingPost, setEditingPost] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
   const [giftRoomId, setGiftRoomId] = useState(null);
+  const [giftItems, setGiftItems] = useState([]);
+  const [postImages, setPostImages] = useState([]);
+  const [myItems, setMyItems] = useState([]);
+  const [itemToDelete, setItemToDelete] = useState(null);
   const [identityUserId, setIdentityUserId] = useState(null);
 
   // ---------------- boot / auth ----------------
@@ -72,27 +77,13 @@ export default function App() {
     setToasts((t) => [...t, { id, text }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 6000);
   }
-  function notifTextLocal(n) {
-    if (n.type === 'admin_grant') {
-      const amt = n.points || 0;
-      let t = amt >= 0 ? `포인트 +${amt} 지급` : `포인트 ${amt} 차감`;
-      if (n.message) t += ' · ' + n.message;
-      return t;
-    }
-    if (n.type === 'gift') return `포인트 ${n.points || 0} 선물 도착`;
-    if (n.type === 'comment_on_post') return '내 글에 댓글이 달렸습니다.';
-    if (n.type === 'reply_to_comment') return '내 댓글에 답글이 달렸습니다.';
-    if (n.type === 'chat_message') return '새 메시지가 도착했습니다.';
-    return '알림';
-  }
-
   // ---------------- notifications: realtime ----------------
   useEffect(() => {
     if (!profile) return;
     const unsub = api.subscribeNotifications(
       profile.id,
       (list) => setNotifications(list),
-      (n) => { pushToast(notifTextLocal(n)); if (profile.sound_enabled) playNotifSound(); }
+      (n) => { pushToast(notifText(n)); if (profile.sound_enabled) playNotifSound(); }
     );
     return unsub;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -149,6 +140,15 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile?.id, view, currentPostId]);
 
+  useEffect(() => {
+    if (!profile || view !== 'post' || !currentPostId) return undefined;
+    let live = true;
+    setPostImages([]);
+    api.fetchPostImages(currentPostId).then((imgs) => { if (live) setPostImages(imgs); }).catch(() => {});
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.id, view, currentPostId]);
+
   function openPost(id) { setCurrentPostId(id); setView('post'); }
 
   // ---------------- my page ----------------
@@ -156,8 +156,8 @@ export default function App() {
   const loadMyPage = useCallback(async () => {
     if (!profile) return;
     setMyPageError('');
-    const results = await Promise.allSettled([api.fetchMyPosts(profile.id), api.fetchMyComments(profile.id), api.fetchMyChats(profile.id)]);
-    const [pR, cR, chR] = results;
+    const results = await Promise.allSettled([api.fetchMyPosts(profile.id), api.fetchMyComments(profile.id), api.fetchMyChats(profile.id), api.fetchItemsOf(profile.id)]);
+    const [pR, cR, chR, itR] = results;
     const errors = results.filter((r) => r.status === 'rejected').map((r) => r.reason?.message || String(r.reason));
     if (errors.length) {
       console.error('마이페이지 데이터 로딩 실패:', results);
@@ -166,6 +166,7 @@ export default function App() {
     setMyPosts(pR.status === 'fulfilled' ? pR.value : []);
     setMyComments(cR.status === 'fulfilled' ? cR.value : []);
     setMyChats(chR.status === 'fulfilled' ? chR.value : []);
+    setMyItems(itR.status === 'fulfilled' ? itR.value : []);
   }, [profile]);
   useEffect(() => { if (profile && view === 'mypage') loadMyPage(); }, [profile, view, loadMyPage]);
 
@@ -214,6 +215,12 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile?.id, view, currentChatId]);
 
+  useEffect(() => {
+    if (!giftRoomId || !profile) return;
+    api.fetchItemsOf(profile.id).then(setGiftItems).catch(() => setGiftItems([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [giftRoomId]);
+
   function openChatRoomById(id) { setCurrentChatId(id); setView('chat'); }
   async function openChatWith(postId, targetId) {
     const roomId = await api.openChatWith(postId, targetId);
@@ -235,9 +242,9 @@ export default function App() {
   }
 
   // ---------------- board / post actions ----------------
-  async function submitCompose(board, title, content) {
+  async function submitCompose(board, title, content, images) {
     if (editingPost) await api.updatePost(editingPost.id, board, title, content);
-    else await api.createPost(board, title, content);
+    else await api.createPost(board, title, content, images);
     setComposeOpen(false); setEditingPost(null);
     setCurrentBoard(board); setView('board'); setCurrentPostId(null);
     const p = await api.fetchOwnProfile(profile.id); setProfile(p);
@@ -278,13 +285,20 @@ export default function App() {
       <div className="layout">
         <Sidebar profile={profile} view={view} currentBoard={currentBoard}
           selectBoard={(id) => { setCurrentBoard(id); setView('board'); }}
-          openMyPage={() => setView('mypage')} openGamble={() => setView('gamble')}
+          openMyPage={() => setView('mypage')} openGamble={() => setView('gamble')} openDig={() => setView('dig')}
           openSettings={() => setView('settings')} openAdmin={() => setView('admin')}
           hasChatUnread={hasChatUnread} mobileOpen={mobileNavOpen} closeMobile={() => setMobileNavOpen(false)} />
         <div className={`sidebar-backdrop ${mobileNavOpen ? 'show' : ''}`} onClick={() => setMobileNavOpen(false)} />
         <div className="main"><div className="main-inner">
 
-          {view === 'board' && <Board profile={profile} boardId={currentBoard} posts={posts} openPost={openPost} />}
+          {view === 'board' && (
+            <Board profile={profile} boardId={currentBoard} posts={posts} openPost={openPost}
+              onBulkDelete={(ids, done) => askConfirm(`선택한 게시글 ${ids.length}개를 삭제할까? (댓글·사진도 함께 삭제됩니다)`, async () => { await api.deletePosts(ids); done(); loadPosts(currentBoard); })} />
+          )}
+
+          {view === 'dig' && (
+            <Dig profile={profile} onDug={async () => { const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh); }} />
+          )}
 
           {view === 'post' && (
             <PostDetail
@@ -299,6 +313,8 @@ export default function App() {
               onSubmitComment={async (text, parentId) => { await api.addComment(post.id, parentId, text); const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh); loadPost(post.id); }}
               onDeleteComment={(id) => askConfirm('이 댓글을 삭제할까?', () => doDeleteComment({ id, post_id: post.id }))}
               onEditComment={async (id, content) => { await api.updateComment(post.id, id, content); loadPost(post.id); }}
+              onBulkDeleteComments={(ids, done) => askConfirm(`선택한 댓글 ${ids.length}개를 삭제할까? (답글도 함께 삭제됩니다)`, async () => { await api.deleteComments(post.id, ids); done(); loadPost(post.id); })}
+              images={postImages}
             />
           )}
 
@@ -309,6 +325,7 @@ export default function App() {
               onDeletePost={(p) => askConfirm('이 글을 삭제할까?', () => doDeletePost(p))}
               onDeleteComment={(c) => askConfirm('이 댓글을 삭제할까?', () => doDeleteComment(c))}
               onOpenChatRoom={openChatRoomById}
+              items={myItems} onDeleteItem={(it) => setItemToDelete(it)}
             />
           )}
 
@@ -368,8 +385,13 @@ export default function App() {
           onCancel={() => { setComposeOpen(false); setEditingPost(null); }} onSubmit={submitCompose} />
       )}
       {giftRoomId && (
-        <GiftModal balance={profile.points} onCancel={() => setGiftRoomId(null)}
-          onSend={async (amt) => { await api.sendGift(giftRoomId, amt); const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh); setGiftRoomId(null); loadChat(giftRoomId); }} />
+        <GiftModal balance={profile.points} items={giftItems} onCancel={() => setGiftRoomId(null)}
+          onSendPoints={async (amt) => { await api.sendGift(giftRoomId, amt); const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh); setGiftRoomId(null); loadChat(giftRoomId); }}
+          onSendItem={async (itemId, qty) => { await api.sendGiftItem(giftRoomId, itemId, qty); setGiftRoomId(null); loadChat(giftRoomId); }} />
+      )}
+      {itemToDelete && (
+        <ItemDeleteModal item={itemToDelete} onCancel={() => setItemToDelete(null)}
+          onConfirm={async (id, qty) => { await api.deleteMyItem(id, qty); setItemToDelete(null); loadMyPage(); }} />
       )}
       {identityUserId && (
         <IdentityModal userId={identityUserId} onClose={() => setIdentityUserId(null)} onOpenPost={openPost} />

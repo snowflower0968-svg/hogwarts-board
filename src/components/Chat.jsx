@@ -32,14 +32,15 @@ export default function Chat({ profile, room, messages, onBack, onSend, onOpenGi
           const mine = m.sender_id === profile.id;
           let body;
           if (m.type === 'gift') {
+            const label = m.kind === 'item' ? `소지품 ${m.item_name} x${m.qty}` : `포인트 ${m.amount}`;
             if (m.status === 'pending') {
               body = mine
-                ? <>포인트 {m.amount} 선물 대기중<div><button className="text-btn" onClick={() => onCancel(m.id)}>취소</button></div></>
-                : <>포인트 {m.amount} 선물 도착<div><button className="text-btn" onClick={() => onAccept(m.id)}>받기</button></div></>;
+                ? <>{label} 선물 대기중<div><button className="text-btn" onClick={() => onCancel(m.id)}>취소</button></div></>
+                : <>{label} 선물 도착<div><button className="text-btn" onClick={() => onAccept(m.id)}>받기</button></div></>;
             } else if (m.status === 'accepted') {
-              body = `포인트 ${m.amount} 선물 ${mine ? '전달됨' : '받음'}`;
+              body = `${label} 선물 ${mine ? '전달됨' : '받음'}`;
             } else {
-              body = `포인트 ${m.amount} 선물 취소됨`;
+              body = `${label} 선물 취소됨`;
             }
           } else {
             body = m.text;
@@ -64,7 +65,7 @@ export default function Chat({ profile, room, messages, onBack, onSend, onOpenGi
               placeholder="메시지 보내기"
             />
             <div className="chat-input-buttons">
-              <button type="button" className="gift-btn" onClick={onOpenGift}>포인트</button>
+              <button type="button" className="gift-btn" onClick={onOpenGift}>선물</button>
               <button type="submit">전송</button>
             </div>
           </form>

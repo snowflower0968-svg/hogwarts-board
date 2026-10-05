@@ -59,23 +59,29 @@ export function NotifPanel({ notifications, onOpen, onClose }) {
   );
 }
 
-export function Sidebar({ profile, view, currentBoard, selectBoard, openMyPage, openGamble, openSettings, openAdmin, hasChatUnread, mobileOpen, closeMobile }) {
+export function Sidebar({ profile, view, currentBoard, selectBoard, openMyPage, openGamble, openDig, openSettings, openAdmin, hasChatUnread, mobileOpen, closeMobile }) {
+  const mainBoards = BOARDS.filter((b) => b.id !== 'anon');
+  const anonBoard = BOARDS.find((b) => b.id === 'anon');
+  const renderBoard = (b) => {
+    const locked = !profile.is_admin && b.house && profile.house !== b.house;
+    return (
+      <div key={b.id} className={`sidebar-item ${view === 'board' && currentBoard === b.id ? 'active' : ''}`} onClick={() => { selectBoard(b.id); closeMobile(); }}>
+        {b.name}{locked ? ' (열람 전용)' : ''}
+      </div>
+    );
+  };
   return (
     <div className={`sidebar ${mobileOpen ? 'open' : ''}`}>
       <div className="sidebar-section">게시판</div>
-      {BOARDS.map((b) => {
-        const locked = !profile.is_admin && b.house && profile.house !== b.house;
-        return (
-          <div key={b.id} className={`sidebar-item ${view === 'board' && currentBoard === b.id ? 'active' : ''}`} onClick={() => { selectBoard(b.id); closeMobile(); }}>
-            {b.name}{locked ? ' (열람 전용)' : ''}
-          </div>
-        );
-      })}
+      {mainBoards.map(renderBoard)}
+      <div className="sidebar-divider" />
+      {anonBoard && renderBoard(anonBoard)}
       <div className="sidebar-divider" />
       <div className={`sidebar-item ${view === 'mypage' ? 'active' : ''}`} onClick={() => { openMyPage(); closeMobile(); }}>
         마이페이지{hasChatUnread && <span className="dot-badge" />}
       </div>
       <div className={`sidebar-item ${view === 'gamble' ? 'active' : ''}`} onClick={() => { openGamble(); closeMobile(); }}>도박장</div>
+      <div className={`sidebar-item ${view === 'dig' ? 'active' : ''}`} onClick={() => { openDig(); closeMobile(); }}>간이 조사</div>
       <div className={`sidebar-item ${view === 'settings' ? 'active' : ''}`} onClick={() => { openSettings(); closeMobile(); }}>설정</div>
       {profile.is_admin && (
         <div className={`sidebar-item ${view === 'admin' ? 'active' : ''}`} onClick={() => { openAdmin(); closeMobile(); }}>관리자 페이지</div>

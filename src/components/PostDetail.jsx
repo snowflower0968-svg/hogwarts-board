@@ -19,7 +19,10 @@ function AuthorLabel({ post, authorId, anonMap, profilesById, profile, cls, onOp
   return <span className={`${cls} clickable`} onClick={() => onOpenChat(authorId)} title="메시지">{label}</span>;
 }
 
-export default function PostDetail({ profile, profilesById, post, comments, onBack, onLike, onDelete, onEdit, onTogglePinned, onOpenChat, onOpenIdentity, onSubmitComment, onDeleteComment, onEditComment }) {
+export default function PostDetail({ profile, profilesById, post, comments, onBack, onLike, onDelete, onEdit, onTogglePinned, onOpenChat, onOpenIdentity, onSubmitComment, onDeleteComment, onEditComment, onBulkDeleteComments, images = [] }) {
+  const [lightbox, setLightbox] = useState(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState(() => new Set());
   const [replyingTo, setReplyingTo] = useState(null);
   const [replyText, setReplyText] = useState('');
   const [editingId, setEditingId] = useState(null);
@@ -31,6 +34,15 @@ export default function PostDetail({ profile, profilesById, post, comments, onBa
   const liked = (post.post_likes || []).some((l) => l.user_id === profile.id);
   const anonMap = computeAnonMap(post, comments, profilesById);
   const topLevel = comments.filter((c) => !c.parent_id).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+
+  function toggleSel(id) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  function exitSelect() { setSelectMode(false); setSelected(new Set()); }
 
   function getAllDescendants(rootId) {
     const direct = comments.filter((c) => c.parent_id === rootId);
@@ -46,6 +58,7 @@ export default function PostDetail({ profile, profilesById, post, comments, onBa
     return (
       <div key={c.id} className={`comment-item ${isReply ? 'reply' : ''}`}>
         <div className="c-top">
+          {selectMode && <input type="checkbox" className="row-check" checked={selected.has(c.id)} onChange={() => toggleSel(c.id)} />}
           <AuthorLabel post={post} authorId={c.author_id} anonMap={anonMap} profilesById={profilesById} profile={profile}
             cls={`c-author${isOwnerOfPost ? ' owner' : ''}`} onOpenChat={(id) => onOpenChat(post.id, id)} onOpenIdentity={onOpenIdentity} />
           <span className="c-time">{fmtTime(c.created_at)}</span>
@@ -101,14 +114,39 @@ export default function PostDetail({ profile, profilesById, post, comments, onBa
           </div>
         </div>
         <div className="pd-content">{post.content}</div>
+        {images.length > 0 && (
+          <div className={`pd-images n${Math.min(images.length, 4)}`}>
+            {images.map((src, i) => (
+              <img key={i} src={src} alt={`첨부 사진 ${i + 1}`} onClick={() => setLightbox(src)} />
+            ))}
+          </div>
+        )}
         <div className="pd-bottom">
           <button className={`like-btn ${liked ? 'liked' : ''}`} onClick={onLike}>좋아요 {(post.post_likes || []).length}</button>
         </div>
       </div>
       <div className="comments-wrap">
-        <div className="comments-head">댓글 {comments.length}</div>
+        <div className="comments-head">
+          댓글 {comments.length}
+          {profile.is_admin && comments.length > 0 && !selectMode && (
+            <button className="select-toggle" onClick={() => setSelectMode(true)}>선택</button>
+          )}
+        </div>
+        {selectMode && (
+          <div className="select-bar">
+            <span>{selected.size}개 선택 (답글도 함께 삭제)</span>
+            <button onClick={() => setSelected(new Set(comments.map((c) => c.id)))}>전체 선택</button>
+            <button className="danger" disabled={!selected.size} onClick={() => onBulkDeleteComments([...selected], exitSelect)}>선택 삭제</button>
+            <button onClick={exitSelect}>취소</button>
+          </div>
+        )}
         {topLevel.length === 0 ? <div className="no-comments">댓글이 없습니다.</div> : topLevel.map((c) => renderComment(c, false))}
       </div>
+      {lightbox && (
+        <div className="modal-overlay lightbox" onClick={() => setLightbox(null)}>
+          <img src={lightbox} alt="확대 사진" />
+        </div>
+      )}
     </>
   );
 }

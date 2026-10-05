@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { BOARDS } from '../lib/api';
-import { boardName, houseName, fmtTime } from '../lib/helpers';
+import { boardName, houseName, fmtTime, compressImage } from '../lib/helpers';
 import { canPostToBoard } from './Board';
 import { fetchPostsByAuthor, fetchCommentsByAuthor, fetchGambleCountByUser, fetchProfileById } from '../lib/api';
 
@@ -8,14 +8,38 @@ export function ComposeModal({ profile, editingPost, defaultBoard, onCancel, onS
   const [board, setBoard] = useState(editingPost ? editingPost.board_id : defaultBoard);
   const [title, setTitle] = useState(editingPost ? editingPost.title : '');
   const [content, setContent] = useState(editingPost ? editingPost.content : '');
+  const [images, setImages] = useState([]);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const fileRef = useRef(null);
   const list = editingPost ? BOARDS : BOARDS.filter((b) => canPostToBoard(profile, b.id));
+
+  async function addFiles(e) {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (!files.length) return;
+    const room = 4 - images.length;
+    if (room <= 0) { setError('사진은 최대 4장까지 첨부할 수 있습니다.'); return; }
+    setBusy(true); setError('');
+    try {
+      const out = [];
+      for (const f of files.slice(0, room)) {
+        // eslint-disable-next-line no-await-in-loop
+        out.push(await compressImage(f));
+      }
+      setImages((prev) => [...prev, ...out].slice(0, 4));
+      if (files.length > room) setError('사진은 최대 4장까지만 첨부됩니다.');
+    } catch (err) { setError(err.message || '사진을 처리할 수 없습니다.'); }
+    finally { setBusy(false); }
+  }
 
   async function submit(e) {
     e.preventDefault();
+    if (busy) return;
     if (!title.trim() || !content.trim()) { setError('제목과 내용을 입력하세요.'); return; }
-    try { await onSubmit(board, title.trim(), content.trim()); }
-    catch (err) { setError(err.message || '오류가 발생했습니다.'); }
+    setBusy(true);
+    try { await onSubmit(board, title.trim(), content.trim(), images); }
+    catch (err) { setError(err.message || '오류가 발생했습니다.'); setBusy(false); }
   }
 
   return (
@@ -29,9 +53,27 @@ export function ComposeModal({ profile, editingPost, defaultBoard, onCancel, onS
           </select>
           <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="제목" />
           <textarea value={content} onChange={(e) => setContent(e.target.value)} placeholder="내용" />
+          {!editingPost && (
+            <div className="img-attach">
+              <button type="button" className="img-add" disabled={busy || images.length >= 4} onClick={() => fileRef.current?.click()}>
+                {busy ? '처리 중...' : `사진 첨부 (${images.length}/4)`}
+              </button>
+              <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={addFiles} />
+              {images.length > 0 && (
+                <div className="img-previews">
+                  {images.map((src, i) => (
+                    <div key={i} className="img-thumb">
+                      <img src={src} alt={`첨부 ${i + 1}`} />
+                      <button type="button" onClick={() => setImages(images.filter((_, j) => j !== i))} aria-label="사진 삭제">×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <div className="modal-actions">
             <button type="button" className="modal-cancel" onClick={onCancel}>취소</button>
-            <button type="submit" className="modal-confirm">{editingPost ? '수정 완료' : '등록하기'}</button>
+            <button type="submit" className="modal-confirm" disabled={busy}>{editingPost ? '수정 완료' : '등록하기'}</button>
           </div>
         </form>
       </div>
@@ -53,28 +95,86 @@ export function ConfirmModal({ message, danger = true, onCancel, onConfirm }) {
   );
 }
 
-export function GiftModal({ balance, onCancel, onSend }) {
+export function GiftModal({ balance, items = [], onCancel, onSendPoints, onSendItem }) {
+  const [mode, setMode] = useState('points');
   const [amount, setAmount] = useState('');
+  const [itemId, setItemId] = useState('');
+  const [qty, setQty] = useState('1');
   const [error, setError] = useState('');
+  const selected = items.find((i) => i.id === itemId);
+
   async function submit(e) {
     e.preventDefault();
-    const amt = parseInt(amount, 10);
-    if (!amt || amt <= 0) { setError('보낼 포인트를 입력하세요.'); return; }
-    try { await onSend(amt); }
-    catch (err) { setError(err.message || '오류가 발생했습니다.'); }
+    try {
+      if (mode === 'points') {
+        const amt = parseInt(amount, 10);
+        if (!amt || amt <= 0) { setError('보낼 포인트를 입력하세요.'); return; }
+        await onSendPoints(amt);
+      } else {
+        const q = parseInt(qty, 10);
+        if (!selected) { setError('보낼 소지품을 선택하세요.'); return; }
+        if (!q || q <= 0 || q > selected.qty) { setError('수량을 확인하세요.'); return; }
+        await onSendItem(selected.id, q);
+      }
+    } catch (err) { setError(err.message || '오류가 발생했습니다.'); }
   }
+
   return (
     <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onCancel()}>
       <div className="modal-card">
-        <div className="modal-title">포인트 보내기</div>
+        <div className="modal-title">선물 보내기</div>
+        <div className="seg-row">
+          <button type="button" className={mode === 'points' ? 'on' : ''} onClick={() => { setMode('points'); setError(''); }}>포인트</button>
+          <button type="button" className={mode === 'item' ? 'on' : ''} onClick={() => { setMode('item'); setError(''); }}>소지품</button>
+        </div>
         {error && <div className="auth-error">{error}</div>}
         <form onSubmit={submit}>
-          <input type="number" min="1" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={`보유 ${balance}P`} />
+          {mode === 'points' ? (
+            <input type="number" min="1" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={`보유 ${balance}P`} />
+          ) : items.length === 0 ? (
+            <div className="empty-state" style={{ padding: '20px 0' }}>보유한 소지품이 없습니다.</div>
+          ) : (
+            <>
+              <select value={itemId} onChange={(e) => { setItemId(e.target.value); setQty('1'); }}>
+                <option value="">소지품 선택</option>
+                {items.map((i) => <option key={i.id} value={i.id}>{i.name} (보유 {i.qty})</option>)}
+              </select>
+              <input type="number" min="1" max={selected ? selected.qty : undefined} value={qty} onChange={(e) => setQty(e.target.value)} placeholder="수량" />
+            </>
+          )}
           <div className="modal-actions">
             <button type="button" className="modal-cancel" onClick={onCancel}>취소</button>
             <button type="submit" className="modal-confirm">보내기</button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+export function ItemDeleteModal({ item, onCancel, onConfirm }) {
+  const [qty, setQty] = useState('1');
+  const [error, setError] = useState('');
+  async function go() {
+    const q = parseInt(qty, 10);
+    if (!q || q <= 0 || q > item.qty) { setError('수량을 확인하세요.'); return; }
+    try { await onConfirm(item.id, q); }
+    catch (err) { setError(err.message || '오류가 발생했습니다.'); }
+  }
+  return (
+    <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onCancel()}>
+      <div className="modal-card small">
+        <div className="confirm-msg">
+          <b>{item.name}</b> 을(를) 삭제합니다.<br />정말로 삭제하시겠습니까?
+        </div>
+        {error && <div className="auth-error">{error}</div>}
+        {item.qty > 1 && (
+          <input type="number" min="1" max={item.qty} value={qty} onChange={(e) => setQty(e.target.value)} placeholder={`삭제할 수량 (보유 ${item.qty})`} />
+        )}
+        <div className="modal-actions">
+          <button className="modal-cancel" onClick={onCancel}>취소</button>
+          <button className="modal-confirm danger" onClick={go}>삭제</button>
+        </div>
       </div>
     </div>
   );
