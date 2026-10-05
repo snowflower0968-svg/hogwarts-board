@@ -2,16 +2,28 @@ import React, { useEffect, useRef, useState } from 'react';
 import { BOARDS } from '../lib/api';
 import { boardName, houseName, fmtTime, compressImage } from '../lib/helpers';
 import { canPostToBoard } from './Board';
-import { fetchPostsByAuthor, fetchCommentsByAuthor, fetchGambleCountByUser, fetchProfileById } from '../lib/api';
+import { fetchPostsByAuthor, fetchCommentsByAuthor, fetchGambleCountByUser, fetchProfileById, fetchPostImages, fetchNotes, fetchItemsOf } from '../lib/api';
 
 export function ComposeModal({ profile, editingPost, defaultBoard, onCancel, onSubmit }) {
   const [board, setBoard] = useState(editingPost ? editingPost.board_id : defaultBoard);
   const [title, setTitle] = useState(editingPost ? editingPost.title : '');
   const [content, setContent] = useState(editingPost ? editingPost.content : '');
   const [images, setImages] = useState([]);
+  const [imagesChanged, setImagesChanged] = useState(false);
+  const [loadingImages, setLoadingImages] = useState(!!(editingPost && editingPost.image_count > 0));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const fileRef = useRef(null);
+
+  useEffect(() => {
+    if (!editingPost || !(editingPost.image_count > 0)) return undefined;
+    let live = true;
+    fetchPostImages(editingPost.id)
+      .then((imgs) => { if (live) setImages(imgs); })
+      .catch(() => { if (live) setError('기존 사진을 불러오지 못했습니다.'); })
+      .finally(() => { if (live) setLoadingImages(false); });
+    return () => { live = false; };
+  }, [editingPost]);
   const list = editingPost ? BOARDS : BOARDS.filter((b) => canPostToBoard(profile, b.id));
 
   async function addFiles(e) {
@@ -28,6 +40,7 @@ export function ComposeModal({ profile, editingPost, defaultBoard, onCancel, onS
         out.push(await compressImage(f));
       }
       setImages((prev) => [...prev, ...out].slice(0, 4));
+      setImagesChanged(true);
       if (files.length > room) setError('사진은 최대 4장까지만 첨부됩니다.');
     } catch (err) { setError(err.message || '사진을 처리할 수 없습니다.'); }
     finally { setBusy(false); }
@@ -35,10 +48,10 @@ export function ComposeModal({ profile, editingPost, defaultBoard, onCancel, onS
 
   async function submit(e) {
     e.preventDefault();
-    if (busy) return;
+    if (busy || loadingImages) return;
     if (!title.trim() || !content.trim()) { setError('제목과 내용을 입력하세요.'); return; }
     setBusy(true);
-    try { await onSubmit(board, title.trim(), content.trim(), images); }
+    try { await onSubmit(board, title.trim(), content.trim(), images, imagesChanged); }
     catch (err) { setError(err.message || '오류가 발생했습니다.'); setBusy(false); }
   }
 
@@ -53,10 +66,10 @@ export function ComposeModal({ profile, editingPost, defaultBoard, onCancel, onS
           </select>
           <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="제목" />
           <textarea value={content} onChange={(e) => setContent(e.target.value)} placeholder="내용" />
-          {!editingPost && (
+          {(
             <div className="img-attach">
-              <button type="button" className="img-add" disabled={busy || images.length >= 4} onClick={() => fileRef.current?.click()}>
-                {busy ? '처리 중...' : `사진 첨부 (${images.length}/4)`}
+              <button type="button" className="img-add" disabled={busy || loadingImages || images.length >= 4} onClick={() => fileRef.current?.click()}>
+                {loadingImages ? '사진 불러오는 중...' : busy ? '처리 중...' : `사진 첨부 (${images.length}/4)`}
               </button>
               <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={addFiles} />
               {images.length > 0 && (
@@ -64,7 +77,7 @@ export function ComposeModal({ profile, editingPost, defaultBoard, onCancel, onS
                   {images.map((src, i) => (
                     <div key={i} className="img-thumb">
                       <img src={src} alt={`첨부 ${i + 1}`} />
-                      <button type="button" onClick={() => setImages(images.filter((_, j) => j !== i))} aria-label="사진 삭제">×</button>
+                      <button type="button" onClick={() => { setImages(images.filter((_, j) => j !== i)); setImagesChanged(true); }} aria-label="사진 삭제">×</button>
                     </div>
                   ))}
                 </div>
@@ -73,7 +86,7 @@ export function ComposeModal({ profile, editingPost, defaultBoard, onCancel, onS
           )}
           <div className="modal-actions">
             <button type="button" className="modal-cancel" onClick={onCancel}>취소</button>
-            <button type="submit" className="modal-confirm" disabled={busy}>{editingPost ? '수정 완료' : '등록하기'}</button>
+            <button type="submit" className="modal-confirm" disabled={busy || loadingImages}>{editingPost ? '수정 완료' : '등록하기'}</button>
           </div>
         </form>
       </div>
@@ -186,6 +199,8 @@ export function IdentityModal({ userId, onClose, onOpenPost }) {
   const [comments, setComments] = useState([]);
   const [detail, setDetail] = useState(false);
   const [gambleCount, setGambleCount] = useState(0);
+  const [notes, setNotes] = useState([]);
+  const [invItems, setInvItems] = useState([]);
 
   useEffect(() => {
     let live = true;
@@ -195,6 +210,8 @@ export function IdentityModal({ userId, onClose, onOpenPost }) {
       setPosts(p); setUser(u); setComments(c);
       const gc = await fetchGambleCountByUser(userId);
       if (live) setGambleCount(gc);
+      const [n, it] = await Promise.allSettled([fetchNotes(userId), fetchItemsOf(userId)]);
+      if (live) { setNotes(n.status === 'fulfilled' ? n.value : []); setInvItems(it.status === 'fulfilled' ? it.value : []); }
     })();
     return () => { live = false; };
   }, [userId]);
@@ -217,6 +234,14 @@ export function IdentityModal({ userId, onClose, onOpenPost }) {
             <div className="row-sub">가입일: {fmtTime(user.created_at)}</div>
             <div className="row-sub">최근 활동: {lastActivity ? fmtTime(lastActivity) : '없음'}</div>
             <div className="row-sub">도박 참여: {gambleCount}회</div>
+            <div className="field-label">개인 탭 - 소지품 ({invItems.length})</div>
+            {invItems.length === 0 ? <div className="row-sub">없음</div> : invItems.map((it) => (
+              <div key={it.id} className="row-sub" style={{ color: 'var(--text)' }}>{it.name}{it.qty > 1 ? ` x${it.qty}` : ''}{it.description ? ` · ${it.description}` : ''}</div>
+            ))}
+            <div className="field-label">개인 탭 - 직접 적은 항목 ({notes.length})</div>
+            {notes.length === 0 ? <div className="row-sub">없음</div> : notes.map((n) => (
+              <div key={n.id} className="row-sub" style={{ color: 'var(--text)' }}>{n.name}{n.note ? ` · ${n.note}` : ''}</div>
+            ))}
             <div className="field-label">작성 글 ({posts.length})</div>
             {posts.length === 0 ? <div className="row-sub">없음</div> : posts.map((p) => (
               <div key={p.id} className="list-row" style={{ padding: '8px 0' }}>

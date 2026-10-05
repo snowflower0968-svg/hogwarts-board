@@ -106,3 +106,34 @@ export function compressImage(file, maxDim = 1000, startQuality = 0.72, maxChars
     reader.readAsDataURL(file);
   });
 }
+
+// 목록용 작은 대표 사진 (정사각형으로 잘라서 아주 작게)
+export function makeThumb(dataUrl, size = 120) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onerror = () => resolve(null);
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = size; canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      const side = Math.min(img.width, img.height);
+      const sx = (img.width - side) / 2;
+      const sy = (img.height - side) / 2;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, size, size);
+      ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
+      resolve(canvas.toDataURL('image/jpeg', 0.6));
+    };
+    img.src = dataUrl;
+  });
+}
+
+export function fmtRemain(ms) {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = total % 60;
+  if (h > 0) return `${h}시간 ${m}분`;
+  if (m > 0) return `${m}분 ${sec}초`;
+  return `${sec}초`;
+}

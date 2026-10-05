@@ -3,8 +3,10 @@ import {
   fetchDigRewards, saveDigReward, deleteDigReward, subscribeDigPublic, subscribeDigSecret,
   adminNewRound, adminAssignCell, adminRandomizeUndug, fetchDigLogs,
   fetchItemsOf, adminGrantItem, adminRemoveItem, fetchItemLogs,
+  deleteDigLogs, deleteItemLogs, fetchProfileById, fetchNotes, adminGrantDigTickets,
 } from '../lib/api';
 import { fmtDateTime } from '../lib/helpers';
+import { LogList } from './AdminLogs';
 
 const cellPos = (i) => `${Math.floor(i / 9) + 1}행 ${(i % 9) + 1}열`;
 
@@ -178,13 +180,19 @@ export function DigLogsAdmin() {
   const [logs, setLogs] = useState(null);
   useEffect(() => { fetchDigLogs().then(setLogs).catch(() => setLogs([])); }, []);
   if (logs === null) return <div className="empty-state">불러오는 중</div>;
-  if (!logs.length) return <div className="empty-state">조사 기록이 없습니다.</div>;
-  return logs.map((l) => (
-    <div key={l.id} className="list-row">
-      <div className="row-top"><span className="row-title" style={{ cursor: 'default' }}>{l.userName}</span></div>
-      <div className="row-sub">{l.round}번째 판 · {cellPos(l.cell)} · {l.rewardName}{l.empty ? ' (꽝)' : ''} · {fmtDateTime(l.created_at)}</div>
-    </div>
-  ));
+  return (
+    <LogList
+      items={logs}
+      emptyText="조사 기록이 없습니다."
+      onDelete={async (ids) => { await deleteDigLogs(ids); setLogs((prev) => prev.filter((l) => !ids.includes(l.id))); }}
+      renderRow={(l) => (
+        <>
+          <div className="log-line1"><span className="log-name">{l.userName}</span><span className="log-tag">{l.empty ? '꽝' : '획득'}</span></div>
+          <div className="log-line2">{l.round}번째 판 · {cellPos(l.cell)} · {l.rewardName} · {fmtDateTime(l.created_at)}</div>
+        </>
+      )}
+    />
+  );
 }
 
 function RemoveRow({ item, onRemove }) {
@@ -213,9 +221,17 @@ export function ItemsAdmin({ users }) {
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
   const [ok, setOk] = useState('');
+  const [notes, setNotes] = useState([]);
+  const [tickets, setTickets] = useState(0);
+  const [tQty, setTQty] = useState('1');
 
   useEffect(() => { fetchDigRewards().then(setRewards).catch(() => {}); }, []);
-  const load = useCallback(async () => { setItems(userId ? await fetchItemsOf(userId) : []); }, [userId]);
+  const load = useCallback(async () => {
+    setItems(userId ? await fetchItemsOf(userId) : []);
+    setNotes(userId ? await fetchNotes(userId).catch(() => []) : []);
+    const prof = userId ? await fetchProfileById(userId) : null;
+    setTickets(prof?.dig_bonus || 0);
+  }, [userId]);
   useEffect(() => { load(); }, [load]);
 
   async function run(fn, okMsg) {
@@ -259,9 +275,27 @@ export function ItemsAdmin({ users }) {
             </div>
           </div>
 
+          <div className="field-label">간이조사권 (보유 {tickets}장)</div>
+          <div style={{ padding: '0 4px' }}>
+            <div className="admin-row-form">
+              <input type="number" value={tQty} onChange={(e) => setTQty(e.target.value)} style={{ width: 64 }} />
+              <input type="text" value={msg} onChange={(e) => setMsg(e.target.value)} placeholder="메시지 (선택)" style={{ flex: 1, minWidth: 110 }} />
+              <button className="accent" onClick={() => run(() => adminGrantDigTickets(userId, Math.abs(parseInt(tQty, 10) || 0), msg.trim()), '조사권을 지급했습니다.')}>지급</button>
+              <button className="danger" onClick={() => run(() => adminGrantDigTickets(userId, -Math.abs(parseInt(tQty, 10) || 0), msg.trim()), '조사권을 회수했습니다.')}>회수</button>
+            </div>
+          </div>
+
           <div className="field-label">보유 소지품</div>
           {items.length === 0 ? <div className="empty-state" style={{ padding: '20px 0' }}>보유한 소지품이 없습니다.</div> : items.map((it) => (
             <RemoveRow key={it.id} item={it} onRemove={(item, q) => run(() => adminRemoveItem(userId, item.id, q, msg.trim()), '회수했습니다.')} />
+          ))}
+
+          <div className="field-label">개인 탭에 직접 적은 항목 ({notes.length})</div>
+          {notes.length === 0 ? <div className="empty-state" style={{ padding: '18px 0' }}>적은 항목이 없습니다.</div> : notes.map((n) => (
+            <div key={n.id} className="list-row">
+              <div className="row-top"><span className="row-title" style={{ cursor: 'default' }}>{n.name}</span></div>
+              {n.note && <div className="item-desc">{n.note}</div>}
+            </div>
           ))}
         </>
       )}
@@ -270,20 +304,26 @@ export function ItemsAdmin({ users }) {
 }
 
 const ACTION_LABEL = {
-  user_delete: '본인 삭제', admin_grant: '관리자 지급', admin_remove: '관리자 회수', transfer: '양도', dig_get: '조사로 획득',
+  user_delete: '본인 삭제', admin_grant: '관리자 지급', admin_remove: '관리자 회수', transfer: '양도', dig_get: '조사로 획득', shop_buy: '상점 구매',
 };
 export function ItemLogsAdmin() {
   const [logs, setLogs] = useState(null);
   useEffect(() => { fetchItemLogs().then(setLogs).catch(() => setLogs([])); }, []);
   if (logs === null) return <div className="empty-state">불러오는 중</div>;
-  if (!logs.length) return <div className="empty-state">소지품 기록이 없습니다.</div>;
-  return logs.map((l) => (
-    <div key={l.id} className="list-row">
-      <div className="row-top">
-        <span className="row-title" style={{ cursor: 'default' }}>{l.userName}{l.action === 'transfer' ? ` → ${l.targetName}` : ''}</span>
-        <span className={`log-tag ${l.action === 'user_delete' ? 'danger' : ''}`}>{ACTION_LABEL[l.action] || l.action}</span>
-      </div>
-      <div className="row-sub">{l.itemName} x{l.qty} · {fmtDateTime(l.created_at)}</div>
-    </div>
-  ));
+  return (
+    <LogList
+      items={logs}
+      emptyText="소지품 기록이 없습니다."
+      onDelete={async (ids) => { await deleteItemLogs(ids); setLogs((prev) => prev.filter((l) => !ids.includes(l.id))); }}
+      renderRow={(l) => (
+        <>
+          <div className="log-line1">
+            <span className="log-name">{l.userName}{l.action === 'transfer' ? ` → ${l.targetName}` : ''}</span>
+            <span className={`log-tag ${l.action === 'user_delete' ? 'danger' : ''}`}>{ACTION_LABEL[l.action] || l.action}</span>
+          </div>
+          <div className="log-line2">{l.itemName} x{l.qty}{l.price != null ? ` · ${l.price}P` : ''} · {fmtDateTime(l.created_at)}</div>
+        </>
+      )}
+    />
+  );
 }

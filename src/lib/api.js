@@ -26,9 +26,7 @@ export const HOUSES = [
 const BOARD_HOUSE = Object.fromEntries(BOARDS.map((b) => [b.id, b.house]));
 
 const CHAT_TTL_MS = 60 * 60 * 1000;
-const POST_REWARD = 5;
-const COMMENT_REWARD_EVERY = 2;
-const COMMENT_REWARD_AMOUNT = 1;
+export const DEFAULT_POINT_SETTINGS = { postEvery: 1, postAmount: 5, commentEvery: 2, commentAmount: 1 };
 const GAMBLE_OUTCOMES = [[10, 1], [5, 4], [3, 8], [2, 15], [1, 22], [-1, 22], [-2, 15], [-3, 8], [-5, 4], [-10, 1]];
 
 export const DIG_SIZE = 81;
@@ -51,6 +49,17 @@ export function chargeState(charges, atMs, createdMs, nowMs) {
   const nc = c + gained;
   if (nc >= DIG_MAX_CHARGES) return { charges: DIG_MAX_CHARGES, at: nowMs, full: true };
   return { charges: nc, at: at + gained * DIG_INTERVAL_MS, full: false };
+}
+
+// ---- 상점: 할인 적용 가격 (반올림) ----
+export function discountActive(item, nowMs) {
+  const pct = Number(item.discountPercent) || 0;
+  if (pct <= 0) return false;
+  return !item.discountUntil || nowMs < item.discountUntil;
+}
+export function effectivePrice(item, nowMs) {
+  if (!discountActive(item, nowMs)) return item.price;
+  return Math.round((item.price * (100 - Number(item.discountPercent))) / 100);
 }
 
 // 확률(가중치) 기반 랜덤 선택
@@ -104,6 +113,7 @@ export async function signIn(loginId, password) {
   }
   const profile = await fetchOwnProfile(cred.user.uid);
   if (!profile) { await fbSignOut(auth); throw new Error('계정 정보를 찾을 수 없습니다.'); }
+  if (profile.withdrawn) { await fbSignOut(auth); throw new Error('탈퇴 처리된 계정입니다.'); }
   if (profile.rejected) { await fbSignOut(auth); throw new Error('가입이 거절된 계정입니다.'); }
   if (!profile.approved) { await fbSignOut(auth); throw new Error('관리자 승인 대기 중입니다.'); }
   return profile;
@@ -116,7 +126,11 @@ function mapUser(id, d) {
     points: d.points || 0, comment_count: d.commentCount || 0,
     sound_enabled: d.soundEnabled !== false, dark_mode: !!d.darkMode, created_at: ts(d.createdAt),
     dig_charges: d.digCharges ?? null, dig_charge_at: d.digChargeAt ? ts(d.digChargeAt) : null,
+    dig_bonus: d.digBonus || 0, withdrawn: !!d.withdrawn, post_count: d.postCount ?? null,
   };
+}
+export function subscribeOwnStatus(id, cb) {
+  return onSnapshot(doc(db, 'users', id), (snap) => { if (snap.exists()) cb(mapUser(id, snap.data())); }, () => {});
 }
 export async function fetchOwnProfile(id) {
   const snap = await getDoc(doc(db, 'users', id));
@@ -147,7 +161,7 @@ function mapPost(id, d) {
     id, board_id: d.boardId, author_id: d.authorId, title: d.title, content: d.content,
     pinned: !!d.pinned, created_at: ts(d.createdAt), updated_at: d.updatedAt ? ts(d.updatedAt) : null,
     post_likes: Array(d.likeCount || 0), comments: Array(d.commentCount || 0),
-    image_count: d.imageCount || 0,
+    image_count: d.imageCount || 0, thumb: d.thumb || null,
   };
 }
 export async function fetchPosts(boardId) {
@@ -192,32 +206,71 @@ export async function fetchProfilesByIds(ids) {
   return map;
 }
 
-export async function createPost(board, title, content, images = []) {
+export async function fetchPointSettings() {
+  try {
+    const snap = await getDoc(doc(db, 'settings', 'points'));
+    const d = snap.exists() ? snap.data() : {};
+    const num = (v, def, min) => { const n = Math.floor(Number(v)); return Number.isFinite(n) && n >= min ? n : def; };
+    return {
+      postEvery: num(d.postEvery, DEFAULT_POINT_SETTINGS.postEvery, 1),
+      postAmount: num(d.postAmount, DEFAULT_POINT_SETTINGS.postAmount, 0),
+      commentEvery: num(d.commentEvery, DEFAULT_POINT_SETTINGS.commentEvery, 1),
+      commentAmount: num(d.commentAmount, DEFAULT_POINT_SETTINGS.commentAmount, 0),
+    };
+  } catch (e) { return { ...DEFAULT_POINT_SETTINGS }; }
+}
+export async function savePointSettings(v) {
+  const n = (x) => Math.floor(Number(x));
+  const next = { postEvery: n(v.postEvery), postAmount: n(v.postAmount), commentEvery: n(v.commentEvery), commentAmount: n(v.commentAmount) };
+  if (!(next.postEvery >= 1) || !(next.commentEvery >= 1)) throw new Error('"몇 개당" 값은 1 이상이어야 합니다.');
+  if (!(next.postAmount >= 0) || !(next.commentAmount >= 0)) throw new Error('포인트는 0 이상이어야 합니다.');
+  await setDoc(doc(db, 'settings', 'points'), next);
+}
+
+export async function createPost(board, title, content, images = [], thumb = null) {
   const userRef = doc(db, 'users', uid());
   const userSnap = await getDoc(userRef);
   const u = userSnap.data();
   const reqHouse = BOARD_HOUSE[board];
   if (reqHouse && !u.isAdmin && u.house !== reqHouse) throw new Error('해당 기숙사 소속만 작성 가능합니다.');
+  const settings = await fetchPointSettings();
+  let prevCount = u.postCount;
+  if (prevCount === undefined || prevCount === null) {
+    const c = await getCountFromServer(query(collection(db, 'posts'), where('authorId', '==', uid())));
+    prevCount = c.data().count;
+  }
+  const newCount = prevCount + 1;
+  const reward = newCount % settings.postEvery === 0 ? settings.postAmount : 0;
   const imgs = (images || []).slice(0, 4);
   const postRef = doc(collection(db, 'posts'));
   // 사진은 글 문서와 분리해서 저장 (목록 조회가 무거워지지 않도록)
   await Promise.all(imgs.map((data, i) => setDoc(doc(db, 'posts', postRef.id, 'images', String(i)), { idx: i, data, createdAt: serverTimestamp() })));
   await setDoc(postRef, {
     boardId: board, authorId: uid(), title, content, pinned: false,
-    likeCount: 0, commentCount: 0, imageCount: imgs.length, createdAt: serverTimestamp(), updatedAt: null,
+    likeCount: 0, commentCount: 0, imageCount: imgs.length, thumb: imgs.length ? (thumb || null) : null,
+    rewardGranted: reward, createdAt: serverTimestamp(), updatedAt: null,
   });
-  await updateDoc(userRef, { points: increment(POST_REWARD) });
+  await updateDoc(userRef, { postCount: newCount, points: increment(reward) });
 }
 export async function fetchPostImages(postId) {
   const snap = await getDocs(collection(db, 'posts', postId, 'images'));
   return snap.docs.map((d) => ({ idx: d.data().idx ?? 0, data: d.data().data })).sort((a, b) => a.idx - b.idx).map((x) => x.data);
 }
-export async function updatePost(id, board, title, content) {
-  await updateDoc(doc(db, 'posts', id), { boardId: board, title, content, updatedAt: serverTimestamp() });
-}
 async function deleteSubcollection(colRef) {
   const snap = await getDocs(colRef);
   await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
+}
+// images 가 배열이면 사진 전체를 그 목록으로 교체, null 이면 사진은 그대로 둠
+export async function updatePost(id, board, title, content, images = null, thumb = null) {
+  const patch = { boardId: board, title, content, updatedAt: serverTimestamp() };
+  if (Array.isArray(images)) {
+    const imgs = images.slice(0, 4);
+    await deleteSubcollection(collection(db, 'posts', id, 'images'));
+    await Promise.all(imgs.map((data, i) => setDoc(doc(db, 'posts', id, 'images', String(i)), { idx: i, data, createdAt: serverTimestamp() })));
+    patch.imageCount = imgs.length;
+    patch.thumb = imgs.length ? (thumb || null) : null;
+  }
+  await updateDoc(doc(db, 'posts', id), patch);
 }
 export async function deletePost(id) {
   const ref = doc(db, 'posts', id);
@@ -227,8 +280,15 @@ export async function deletePost(id) {
   const authorRef = doc(db, 'users', post.authorId);
   const authorSnap = await getDoc(authorRef);
   if (authorSnap.exists()) {
-    const newPts = Math.max(0, (authorSnap.data().points || 0) - POST_REWARD);
-    await updateDoc(authorRef, { points: newPts });
+    let granted = post.rewardGranted;
+    if (granted === undefined || granted === null) {
+      const st = await fetchPointSettings();
+      granted = st.postEvery === 1 ? st.postAmount : 0;
+    }
+    const a = authorSnap.data();
+    const patch = { points: Math.max(0, (a.points || 0) - granted) };
+    if (a.postCount !== undefined && a.postCount !== null) patch.postCount = Math.max(0, a.postCount - 1);
+    await updateDoc(authorRef, patch);
   }
   await deleteSubcollection(collection(db, 'posts', id, 'likes'));
   await deleteSubcollection(collection(db, 'posts', id, 'comments'));
@@ -251,16 +311,45 @@ export async function togglePinned(id) {
 export async function toggleLike(id) {
   const postRef = doc(db, 'posts', id);
   const likeRef = doc(db, 'posts', id, 'likes', uid());
+  const likedRef = doc(db, 'users', uid(), 'likedPosts', id);
   await runTransaction(db, async (tx) => {
     const likeSnap = await tx.get(likeRef);
     if (likeSnap.exists()) {
       tx.delete(likeRef);
+      tx.delete(likedRef);
       tx.update(postRef, { likeCount: increment(-1) });
     } else {
       tx.set(likeRef, { createdAt: serverTimestamp() });
+      tx.set(likedRef, { createdAt: serverTimestamp() });
       tx.update(postRef, { likeCount: increment(1) });
     }
   });
+}
+// 내가 좋아요한 글 모아보기 (예전에 누른 좋아요는 처음 한 번만 찾아서 채움)
+export async function fetchMyLikedPosts() {
+  const me = uid();
+  const userRef = doc(db, 'users', me);
+  const us = await getDoc(userRef);
+  const existing = await getDocs(collection(db, 'users', me, 'likedPosts'));
+  if (!us.data()?.likedBackfill) {
+    const have = new Set(existing.docs.map((d) => d.id));
+    const all = await getDocs(collection(db, 'posts'));
+    const found = await Promise.all(all.docs.map(async (p) => {
+      if (have.has(p.id)) return null;
+      const l = await getDoc(doc(db, 'posts', p.id, 'likes', me));
+      return l.exists() ? p.id : null;
+    }));
+    await Promise.all(found.filter(Boolean).map((pid) => setDoc(doc(db, 'users', me, 'likedPosts', pid), { createdAt: serverTimestamp() })));
+    await updateDoc(userRef, { likedBackfill: true });
+  }
+  const liked = await getDocs(collection(db, 'users', me, 'likedPosts'));
+  const entries = liked.docs.map((d) => ({ id: d.id, at: d.data().createdAt ? ts(d.data().createdAt) : 0 }));
+  const posts = await Promise.all(entries.map(async (e) => {
+    const snap = await getDoc(doc(db, 'posts', e.id));
+    if (!snap.exists()) { deleteDoc(doc(db, 'users', me, 'likedPosts', e.id)).catch(() => {}); return null; }
+    return { ...mapPost(snap.id, snap.data()), liked_at: e.at };
+  }));
+  return posts.filter(Boolean).sort((x, y) => y.liked_at - x.liked_at);
 }
 
 // ---------------- comments ----------------
@@ -269,8 +358,9 @@ export async function addComment(postId, parentId, content) {
   const postRef = doc(db, 'posts', postId);
   const commentRef = doc(collection(db, 'posts', postId, 'comments'));
   const userSnap = await getDoc(userRef);
+  const settings = await fetchPointSettings();
   const newCount = (userSnap.data().commentCount || 0) + 1;
-  const rewardGranted = (newCount % COMMENT_REWARD_EVERY === 0) ? COMMENT_REWARD_AMOUNT : 0;
+  const rewardGranted = (newCount % settings.commentEvery === 0) ? settings.commentAmount : 0;
   await updateDoc(userRef, { commentCount: newCount, points: increment(rewardGranted) });
   await setDoc(commentRef, { authorId: uid(), parentId: parentId || null, content, rewardGranted, createdAt: serverTimestamp() });
   await updateDoc(postRef, { commentCount: increment(1) });
@@ -284,7 +374,7 @@ export async function addComment(postId, parentId, content) {
     if (postSnap.exists() && postSnap.data().authorId !== uid()) { notifTarget = postSnap.data().authorId; notifType = 'comment_on_post'; }
   }
   if (notifTarget) {
-    await addDoc(collection(db, 'notifications'), { userId: notifTarget, type: notifType, postId, commentId: commentRef.id, read: false, createdAt: serverTimestamp() });
+    await addDoc(collection(db, 'notifications'), { userId: notifTarget, type: notifType, postId, commentId: commentRef.id, preview: content.slice(0, 80), read: false, createdAt: serverTimestamp() });
   }
 }
 export async function deleteComments(postId, ids) {
@@ -343,15 +433,23 @@ export async function fetchMyComments(id) {
   const titles = await titlesForPostIds(items.map((i) => i.post_id));
   return items.map((i) => ({ ...i, posts: { title: titles[i.post_id] } }));
 }
-export async function deleteExpiredChatRoom(roomId) {
-  try {
-    const [msgsSnap, readsSnap] = await Promise.all([
-      getDocs(collection(db, 'chatRooms', roomId, 'messages')),
-      getDocs(collection(db, 'chatRooms', roomId, 'reads')),
-    ]);
-    await Promise.all([...msgsSnap.docs, ...readsSnap.docs].map((d) => deleteDoc(d.ref)));
-    await deleteDoc(doc(db, 'chatRooms', roomId));
-  } catch (e) { /* best-effort cleanup */ }
+// 관리자가 직접 삭제할 때만 사용 (만료된 채팅방도 기록은 남겨둠)
+export async function deleteChatRoomFully(roomId) {
+  const [msgsSnap, readsSnap] = await Promise.all([
+    getDocs(collection(db, 'chatRooms', roomId, 'messages')),
+    getDocs(collection(db, 'chatRooms', roomId, 'reads')),
+  ]);
+  await Promise.all([...msgsSnap.docs, ...readsSnap.docs].map((d) => deleteDoc(d.ref)));
+  await deleteDoc(doc(db, 'chatRooms', roomId));
+}
+export async function deleteChatRooms(ids) {
+  for (const id of ids) {
+    // eslint-disable-next-line no-await-in-loop
+    await deleteChatRoomFully(id);
+  }
+}
+async function touchRoom(roomId, text) {
+  try { await updateDoc(doc(db, 'chatRooms', roomId), { lastText: text.slice(0, 60), lastAt: serverTimestamp(), messageCount: increment(1) }); } catch (e) { /* best-effort */ }
 }
 
 export async function fetchMyChats(id) {
@@ -364,7 +462,7 @@ export async function fetchMyChats(id) {
   const now = Date.now();
   const alive = [];
   for (const r of rooms) {
-    if (ts(r.expiresAt) <= now) { deleteExpiredChatRoom(r.id); continue; }
+    if (ts(r.expiresAt) <= now) continue; // 사용자에게는 안 보이지만 관리자는 기록을 볼 수 있음
     alive.push(r);
   }
   return Promise.all(alive.map(async (r) => {
@@ -404,7 +502,7 @@ export async function fetchGambleLogsAdmin() {
   const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
   const profiles = await fetchProfilesFull(items.map((i) => i.userId));
   return items.map((i) => ({
-    id: i.id, bet: i.bet, multiplier: i.multiplier, result_delta: i.resultDelta, balance_after: i.balanceAfter,
+    id: i.id, user_id: i.userId, bet: i.bet, multiplier: i.multiplier, result_delta: i.resultDelta, balance_after: i.balanceAfter,
     created_at: ts(i.createdAt), profiles: profiles[i.userId] || null,
   }));
 }
@@ -463,7 +561,8 @@ export async function sendChatMessage(roomId, text) {
   if (r.expiresAt.toMillis() < Date.now()) throw new Error('대화 가능 시간이 종료되었습니다.');
   await addDoc(collection(db, 'chatRooms', roomId, 'messages'), { senderId: uid(), type: 'text', text, createdAt: serverTimestamp() });
   const recipient = r.userA === uid() ? r.userB : r.userA;
-  await addDoc(collection(db, 'notifications'), { userId: recipient, type: 'chat_message', roomId, read: false, createdAt: serverTimestamp() });
+  await addDoc(collection(db, 'notifications'), { userId: recipient, type: 'chat_message', roomId, preview: text.slice(0, 80), read: false, createdAt: serverTimestamp() });
+  await touchRoom(roomId, text);
 }
 export async function sendGift(roomId, amount) {
   const roomSnap = await getDoc(doc(db, 'chatRooms', roomId));
@@ -478,6 +577,7 @@ export async function sendGift(roomId, amount) {
   await updateDoc(userRef, { points: bal - amount });
   await addDoc(collection(db, 'chatRooms', roomId, 'messages'), { senderId: uid(), type: 'gift', kind: 'points', amount, status: 'pending', createdAt: serverTimestamp() });
   await addDoc(collection(db, 'notifications'), { userId: recipient, type: 'gift', points: amount, roomId, read: false, createdAt: serverTimestamp() });
+  await touchRoom(roomId, `[선물] 포인트 ${amount}`);
 }
 export async function sendGiftItem(roomId, itemId, qtyRaw) {
   const qty = parseInt(qtyRaw, 10);
@@ -492,6 +592,7 @@ export async function sendGiftItem(roomId, itemId, qtyRaw) {
     senderId: uid(), type: 'gift', kind: 'item', itemName: item.name, itemDescription: item.description || '', qty, status: 'pending', createdAt: serverTimestamp(),
   });
   await addDoc(collection(db, 'notifications'), { userId: recipient, type: 'gift', itemName: item.name, qty, roomId, read: false, createdAt: serverTimestamp() });
+  await touchRoom(roomId, `[선물] ${item.name} x${qty}`);
 }
 export async function acceptGift(roomId, msgId) {
   const msgRef = doc(db, 'chatRooms', roomId, 'messages', msgId);
@@ -545,7 +646,7 @@ async function fetchProfilesFull(ids) {
   return map;
 }
 export async function fetchAdminChatRooms() {
-  const snap = await getDocs(query(collection(db, 'chatRooms'), orderBy('createdAt', 'desc')));
+  const snap = await getDocs(query(collection(db, 'chatRooms'), orderBy('createdAt', 'desc'), limit(200)));
   const rooms = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
   const profiles = await fetchProfilesFull(rooms.flatMap((r) => [r.userA, r.userB]));
   const titles = await titlesForPostIds(rooms.map((r) => r.postId).filter(Boolean));
@@ -553,6 +654,7 @@ export async function fetchAdminChatRooms() {
     id: r.id, user_a: r.userA, user_b: r.userB, created_at: ts(r.createdAt), expires_at: ts(r.expiresAt),
     a: profiles[r.userA] || null, b: profiles[r.userB] || null,
     posts: r.postId ? { title: titles[r.postId] } : null,
+    last_text: r.lastText || null, last_at: r.lastAt ? ts(r.lastAt) : null, message_count: r.messageCount ?? null,
   }));
 }
 
@@ -562,7 +664,7 @@ function mapNotif(d) {
   return {
     id: d.id, user_id: x.userId, type: x.type, points: x.points ?? null, message: x.message || null,
     post_id: x.postId || null, comment_id: x.commentId || null, room_id: x.roomId || null,
-    item_name: x.itemName || null, qty: x.qty ?? null,
+    item_name: x.itemName || null, qty: x.qty ?? null, preview: x.preview || null,
     read: !!x.read, created_at: ts(x.createdAt),
   };
 }
@@ -638,6 +740,45 @@ export async function grantPoints(id, amount, message) {
   const newPts = Math.max(0, (snap.data().points || 0) + amount);
   await updateDoc(ref, { points: newPts });
   await addDoc(collection(db, 'notifications'), { userId: id, type: 'admin_grant', points: amount, message: message || null, read: false, createdAt: serverTimestamp() });
+}
+
+async function deleteManyDocs(collName, ids) {
+  for (let i = 0; i < ids.length; i += 400) {
+    const batch = writeBatch(db);
+    ids.slice(i, i + 400).forEach((id) => batch.delete(doc(db, collName, id)));
+    // eslint-disable-next-line no-await-in-loop
+    await batch.commit();
+  }
+}
+export async function deleteGambleLogs(ids) { await deleteManyDocs('gambleLogs', ids); }
+export async function deleteItemLogs(ids) { await deleteManyDocs('itemLogs', ids); }
+export async function deleteDigLogs(ids) { await deleteManyDocs('digLogs', ids); }
+
+// 강제 탈퇴: 로그인 차단(계정 기록은 남김). deleteContent 가 true 면 작성한 글/댓글도 삭제
+export async function adminWithdrawUser(userId, deleteContent) {
+  if (userId === uid()) throw new Error('본인은 탈퇴시킬 수 없습니다.');
+  const target = await fetchProfileById(userId);
+  if (!target) throw new Error('회원 정보를 찾을 수 없습니다.');
+  if (target.is_admin) throw new Error('관리자 계정은 먼저 관리자 권한을 해제해 주세요.');
+  await updateDoc(doc(db, 'users', userId), { withdrawn: true, approved: false, rejected: true });
+  const removed = { posts: 0, comments: 0 };
+  if (deleteContent) {
+    const posts = await fetchPostsByAuthor(userId);
+    await deletePosts(posts.map((p) => p.id));
+    removed.posts = posts.length;
+    const comments = await fetchCommentsByAuthor(userId);
+    const byPost = {};
+    comments.forEach((c) => { (byPost[c.post_id] = byPost[c.post_id] || []).push(c.id); });
+    for (const [pid, ids] of Object.entries(byPost)) {
+      // eslint-disable-next-line no-await-in-loop
+      await deleteComments(pid, ids);
+    }
+    removed.comments = comments.length;
+  }
+  return removed;
+}
+export async function adminRestoreUser(userId) {
+  await updateDoc(doc(db, 'users', userId), { withdrawn: false, rejected: false, approved: true });
 }
 
 export async function signOutUser() { await fbSignOut(auth); }
@@ -778,7 +919,8 @@ export async function digCell(index) {
     const u = us.data();
     const now = Date.now();
     const st = chargeState(u.digCharges ?? null, u.digChargeAt ? u.digChargeAt.toMillis() : null, u.createdAt ? u.createdAt.toMillis() : now, now);
-    if (st.charges < 1) throw new Error('조사 가능 횟수가 없습니다.');
+    const bonus = u.digBonus || 0;
+    if (st.charges < 1 && bonus < 1) throw new Error('조사 가능 횟수가 없습니다.');
     if (pub.cells[index].dug) throw new Error('이미 조사된 칸입니다.');
     const cells = sec.cells.slice();
     let cell = { ...cells[index] };
@@ -793,8 +935,13 @@ export async function digCell(index) {
     const newPub = pub.cells.slice();
     newPub[index] = { dug: true, name: cell.name, description: cell.description, empty: cell.empty };
     cells[index] = { ...cell, by: me, byName: u.characterName, at: now };
-    const wasFull = st.charges >= DIG_MAX_CHARGES;
-    tx.update(userRef, { digCharges: st.charges - 1, digChargeAt: Timestamp.fromMillis(wasFull ? now : st.at) });
+    if (st.charges >= 1) {
+      // 자연 충전분을 먼저 사용 (충전 타이머가 멈추지 않도록)
+      const wasFull = st.charges >= DIG_MAX_CHARGES;
+      tx.update(userRef, { digCharges: st.charges - 1, digChargeAt: Timestamp.fromMillis(wasFull ? now : st.at) });
+    } else {
+      tx.update(userRef, { digBonus: bonus - 1 });
+    }
     if (!cell.empty) {
       if (itemSnap.exists()) tx.update(itemRef, { qty: increment(1) });
       else tx.set(itemRef, { name: cell.name, description: cell.description, qty: 1, createdAt: serverTimestamp() });
@@ -820,3 +967,114 @@ export async function fetchDigLogs() {
   const snap = await getDocs(query(collection(db, 'digLogs'), orderBy('createdAt', 'desc'), limit(300)));
   return snap.docs.map((d) => ({ id: d.id, ...d.data(), created_at: ts(d.data().createdAt) }));
 }
+
+
+// ================= 간이조사권 (구매/선물) =================
+export async function adminGrantDigTickets(userId, deltaRaw, message) {
+  const delta = parseInt(deltaRaw, 10);
+  if (!delta) throw new Error('수량을 입력하세요. (회수는 음수)');
+  const ref = doc(db, 'users', userId);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('회원 정보를 찾을 수 없습니다.');
+    const cur = snap.data().digBonus || 0;
+    if (cur + delta < 0) throw new Error('보유한 조사권보다 많이 회수할 수 없습니다.');
+    tx.update(ref, { digBonus: cur + delta });
+  });
+  const target = await fetchProfileById(userId);
+  await logItem({ action: delta > 0 ? 'admin_grant' : 'admin_remove', userId, userName: target?.character_name || '', itemName: '간이조사권', itemDescription: '', qty: Math.abs(delta) });
+  await addDoc(collection(db, 'notifications'), { userId, type: 'admin_item', message: `간이조사권 ${delta > 0 ? '지급' : '회수'}: ${Math.abs(delta)}장${message ? ' · ' + message : ''}`, read: false, createdAt: serverTimestamp() });
+}
+
+// ================= 상점 =================
+function mapShop(id, d) {
+  return {
+    id, name: d.name, description: d.description || '', price: Number(d.price) || 0,
+    kind: d.kind === 'dig_ticket' ? 'dig_ticket' : 'item', enabled: d.enabled !== false,
+    discountPercent: Number(d.discountPercent) || 0, discountUntil: d.discountUntil ?? null,
+    createdMs: d.createdAt ? ts(d.createdAt) : 0,
+  };
+}
+export function subscribeShop(cb) {
+  return onSnapshot(collection(db, 'shopItems'), (snap) => {
+    cb(snap.docs.map((d) => mapShop(d.id, d.data())).sort((a, b) => a.createdMs - b.createdMs));
+  }, () => cb([]));
+}
+export async function saveShopItem(id, data) {
+  if (!data.name || !data.name.trim()) throw new Error('상품 이름을 입력하세요.');
+  const price = Math.floor(Number(data.price));
+  if (!(price >= 0)) throw new Error('가격은 0 이상의 숫자여야 합니다.');
+  const payload = { name: data.name.trim(), description: (data.description || '').trim(), price, kind: data.kind === 'dig_ticket' ? 'dig_ticket' : 'item', enabled: data.enabled !== false };
+  if (id) await updateDoc(doc(db, 'shopItems', id), payload);
+  else await addDoc(collection(db, 'shopItems'), { ...payload, discountPercent: 0, discountUntil: null, createdAt: serverTimestamp() });
+}
+export async function deleteShopItem(id) { await deleteDoc(doc(db, 'shopItems', id)); }
+// 여러 상품에 한꺼번에 할인 적용. hours 가 비어 있으면 해제할 때까지 계속 할인
+export async function setShopDiscount(ids, percentRaw, hoursRaw) {
+  const percent = Number(percentRaw);
+  if (!ids.length) throw new Error('할인할 상품을 선택하세요.');
+  if (!(percent > 0 && percent <= 100)) throw new Error('할인율은 1~100 사이로 입력하세요.');
+  const hours = hoursRaw === '' || hoursRaw === null || hoursRaw === undefined ? null : Number(hoursRaw);
+  if (hours !== null && !(hours > 0)) throw new Error('할인 시간은 0보다 커야 합니다. (비우면 해제 전까지 계속)');
+  const until = hours === null ? null : Date.now() + Math.round(hours * 3600 * 1000);
+  const batch = writeBatch(db);
+  ids.forEach((id) => batch.update(doc(db, 'shopItems', id), { discountPercent: percent, discountUntil: until }));
+  await batch.commit();
+}
+export async function clearShopDiscount(ids) {
+  if (!ids.length) throw new Error('상품을 선택하세요.');
+  const batch = writeBatch(db);
+  ids.forEach((id) => batch.update(doc(db, 'shopItems', id), { discountPercent: 0, discountUntil: null }));
+  await batch.commit();
+}
+export async function buyShopItem(shopId, qtyRaw) {
+  const qty = parseInt(qtyRaw, 10);
+  if (!qty || qty <= 0 || qty > 99) throw new Error('수량은 1~99 사이로 입력하세요.');
+  const me = uid();
+  let info;
+  await runTransaction(db, async (tx) => {
+    const shopRef = doc(db, 'shopItems', shopId);
+    const userRef = doc(db, 'users', me);
+    const ss = await tx.get(shopRef);
+    const us = await tx.get(userRef);
+    if (!ss.exists() || ss.data().enabled === false) throw new Error('판매 중이 아닌 상품입니다.');
+    const shop = mapShop(ss.id, ss.data());
+    const now = Date.now();
+    const unit = effectivePrice(shop, now);
+    const total = unit * qty;
+    const pts = us.data().points || 0;
+    if (pts < total) throw new Error('포인트가 부족합니다.');
+    let itemRef = null; let itemSnap = null;
+    if (shop.kind !== 'dig_ticket') {
+      itemRef = doc(db, 'users', me, 'items', itemKey(shop.name, shop.description));
+      itemSnap = await tx.get(itemRef);
+    }
+    const patch = { points: pts - total };
+    if (shop.kind === 'dig_ticket') patch.digBonus = increment(qty);
+    tx.update(userRef, patch);
+    if (itemRef) {
+      if (itemSnap.exists()) tx.update(itemRef, { qty: increment(qty) });
+      else tx.set(itemRef, { name: shop.name, description: shop.description, qty, createdAt: serverTimestamp() });
+    }
+    info = { name: shop.name, kind: shop.kind, unit, total, qty, userName: us.data().characterName };
+  });
+  await logItem({ action: 'shop_buy', userId: me, userName: info.userName, itemName: info.name, itemDescription: '', qty, price: info.total });
+  return info;
+}
+
+// ================= 개인 메모 (자유 추가 항목: 양도 불가) =================
+export async function fetchNotes(userId) {
+  const snap = await getDocs(collection(db, 'users', userId, 'notes'));
+  return snap.docs
+    .map((d) => ({ id: d.id, name: d.data().name, note: d.data().note || '', created_at: d.data().createdAt ? ts(d.data().createdAt) : 0 }))
+    .sort((a, b) => a.created_at - b.created_at);
+}
+export async function addNote(name, note) {
+  if (!name || !name.trim()) throw new Error('이름을 입력하세요.');
+  await addDoc(collection(db, 'users', uid(), 'notes'), { name: name.trim(), note: (note || '').trim(), createdAt: serverTimestamp() });
+}
+export async function updateNote(id, name, note) {
+  if (!name || !name.trim()) throw new Error('이름을 입력하세요.');
+  await updateDoc(doc(db, 'users', uid(), 'notes', id), { name: name.trim(), note: (note || '').trim() });
+}
+export async function deleteNote(id) { await deleteDoc(doc(db, 'users', uid(), 'notes', id)); }

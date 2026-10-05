@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as api from './lib/api';
-import { playNotifSound, notifText } from './lib/helpers';
+import { playNotifSound, notifText, makeThumb } from './lib/helpers';
 
 import { LoginScreen, SignupScreen, SignupDoneScreen } from './components/Auth';
 import { Header, NotifPanel, Sidebar } from './components/Shell';
-import Board from './components/Board';
+import Board, { canViewBoard } from './components/Board';
 import PostDetail from './components/PostDetail';
 import MyPage from './components/MyPage';
 import Gamble from './components/Gamble';
@@ -14,6 +14,8 @@ import Admin from './components/Admin';
 import Toasts from './components/Toasts';
 import { ComposeModal, ConfirmModal, GiftModal, IdentityModal, ItemDeleteModal } from './components/Modals';
 import Dig from './components/Dig';
+import Shop from './components/Shop';
+import Personal from './components/Personal';
 
 export default function App() {
   const [profile, setProfile] = useState(null);
@@ -34,7 +36,7 @@ export default function App() {
   const [myComments, setMyComments] = useState([]);
   const [myChats, setMyChats] = useState([]);
 
-  const [adminData, setAdminData] = useState({ pendingUsers: [], allUsers: [], allPosts: [], allComments: [], gambleLogs: [], chatRooms: [] });
+  const [adminData, setAdminData] = useState({ pendingUsers: [], allUsers: [], allPosts: [], allComments: [] });
 
   const [chatRoom, setChatRoom] = useState(null);
   const [chatMessages, setChatMessages] = useState([]);
@@ -60,7 +62,7 @@ export default function App() {
       unsub();
       if (user) {
         const p = await api.fetchOwnProfile(user.uid);
-        if (p && p.approved && !p.rejected) setProfile(p);
+        if (p && p.approved && !p.rejected && !p.withdrawn) setProfile(p);
         else await api.signOutUser();
       }
       setBooted(true);
@@ -83,26 +85,42 @@ export default function App() {
     const unsub = api.subscribeNotifications(
       profile.id,
       (list) => setNotifications(list),
-      (n) => { pushToast(notifText(n)); if (profile.sound_enabled) playNotifSound(); }
+      (n) => { pushToast(notifText(n) + (n.preview ? ' · ' + n.preview : '')); if (profile.sound_enabled) playNotifSound(); }
     );
     return unsub;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile?.id]);
 
+  // 관리자가 강제 탈퇴시키면 바로 로그아웃
+  useEffect(() => {
+    if (!profile) return undefined;
+    return api.subscribeOwnStatus(profile.id, async (p) => {
+      if (p.withdrawn || p.rejected) {
+        await api.signOutUser();
+        setProfile(null); setView('board'); setNotifOpen(false);
+        window.alert('관리자에 의해 탈퇴 처리된 계정입니다.');
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.id]);
+
   const unreadCount = notifications.filter((n) => !n.read).length;
 
-  async function toggleNotifPanel() {
-    const next = !notifOpen;
-    setNotifOpen(next);
-    if (next) {
-      const unreadIds = notifications.filter((n) => !n.read).map((n) => n.id);
-      if (unreadIds.length) {
-        await api.markNotificationsRead(unreadIds);
-        setNotifications((prev) => prev.map((n) => (unreadIds.includes(n.id) ? { ...n, read: true } : n)));
-      }
-    }
+  // 알림은 눌러야 읽음 처리됨 (패널을 열기만 해서는 안 바뀜)
+  function toggleNotifPanel() { setNotifOpen((v) => !v); }
+  function markOneRead(n) {
+    if (n.read) return;
+    setNotifications((prev) => prev.map((x) => (x.id === n.id ? { ...x, read: true } : x)));
+    api.markNotificationsRead([n.id]).catch(() => {});
+  }
+  async function readAllNotifs() {
+    const ids = notifications.filter((n) => !n.read).map((n) => n.id);
+    if (!ids.length) return;
+    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    await api.markNotificationsRead(ids).catch(() => {});
   }
   function openNotif(n) {
+    markOneRead(n);
     setNotifOpen(false);
     if ((n.type === 'comment_on_post' || n.type === 'reply_to_comment') && n.post_id) openPost(n.post_id);
     else if (n.type === 'chat_message' && n.room_id) openChatRoomById(n.room_id);
@@ -175,10 +193,8 @@ export default function App() {
   const loadAdmin = useCallback(async () => {
     if (!profile?.is_admin) return;
     setAdminError('');
-    const results = await Promise.allSettled([
-      api.fetchAllUsers(), api.fetchAllPostsAdmin(), api.fetchAllCommentsAdmin(), api.fetchGambleLogsAdmin(), api.fetchAdminChatRooms(),
-    ]);
-    const [allR, postsR, commentsR, gamblesR, roomsR] = results;
+    const results = await Promise.allSettled([api.fetchAllUsers(), api.fetchAllPostsAdmin(), api.fetchAllCommentsAdmin()]);
+    const [allR, postsR, commentsR] = results;
     const errors = results.filter((r) => r.status === 'rejected').map((r) => r.reason?.message || String(r.reason));
     if (errors.length) {
       console.error('관리자 데이터 로딩 실패:', results);
@@ -190,8 +206,6 @@ export default function App() {
       allUsers: all,
       allPosts: postsR.status === 'fulfilled' ? postsR.value : [],
       allComments: commentsR.status === 'fulfilled' ? commentsR.value : [],
-      gambleLogs: gamblesR.status === 'fulfilled' ? gamblesR.value : [],
-      chatRooms: roomsR.status === 'fulfilled' ? roomsR.value : [],
     });
   }, [profile]);
   useEffect(() => { if (profile?.is_admin && view === 'admin') loadAdmin(); }, [profile, view, loadAdmin]);
@@ -200,7 +214,6 @@ export default function App() {
   const loadChat = useCallback(async (roomId) => {
     const [room, msgs] = await Promise.all([api.fetchChatRoom(roomId), api.fetchChatMessages(roomId)]);
     if (room && new Date(room.expires_at).getTime() <= Date.now()) {
-      await api.deleteExpiredChatRoom(roomId);
       setChatRoom(null); setChatMessages([]);
       return;
     }
@@ -242,9 +255,10 @@ export default function App() {
   }
 
   // ---------------- board / post actions ----------------
-  async function submitCompose(board, title, content, images) {
-    if (editingPost) await api.updatePost(editingPost.id, board, title, content);
-    else await api.createPost(board, title, content, images);
+  async function submitCompose(board, title, content, images, imagesChanged) {
+    const thumb = images && images.length ? await makeThumb(images[0]) : null;
+    if (editingPost) await api.updatePost(editingPost.id, board, title, content, imagesChanged ? images : null, thumb);
+    else await api.createPost(board, title, content, images, thumb);
     setComposeOpen(false); setEditingPost(null);
     setCurrentBoard(board); setView('board'); setCurrentPostId(null);
     const p = await api.fetchOwnProfile(profile.id); setProfile(p);
@@ -274,6 +288,8 @@ export default function App() {
     return <LoginScreen goSignup={() => setAuthScreen('signup')} onLoggedIn={(p) => { setProfile(p); setAuthScreen('login'); }} />;
   }
 
+  const postBlocked = view === 'post' && post && !canViewBoard(profile, post.board_id);
+
   const hasChatUnread = myChats.some((r) => (r.chat_messages || []).some((m) => m.sender_id !== profile.id &&
     new Date(m.created_at).getTime() > new Date((r.chat_reads || []).find((x) => x.user_id === profile.id)?.last_read_at || 0).getTime()));
 
@@ -285,7 +301,7 @@ export default function App() {
       <div className="layout">
         <Sidebar profile={profile} view={view} currentBoard={currentBoard}
           selectBoard={(id) => { setCurrentBoard(id); setView('board'); }}
-          openMyPage={() => setView('mypage')} openGamble={() => setView('gamble')} openDig={() => setView('dig')}
+          openMyPage={() => setView('mypage')} openPersonal={() => setView('personal')} openGamble={() => setView('gamble')} openDig={() => setView('dig')} openShop={() => setView('shop')}
           openSettings={() => setView('settings')} openAdmin={() => setView('admin')}
           hasChatUnread={hasChatUnread} mobileOpen={mobileNavOpen} closeMobile={() => setMobileNavOpen(false)} />
         <div className={`sidebar-backdrop ${mobileNavOpen ? 'show' : ''}`} onClick={() => setMobileNavOpen(false)} />
@@ -296,11 +312,24 @@ export default function App() {
               onBulkDelete={(ids, done) => askConfirm(`선택한 게시글 ${ids.length}개를 삭제할까? (댓글·사진도 함께 삭제됩니다)`, async () => { await api.deletePosts(ids); done(); loadPosts(currentBoard); })} />
           )}
 
+          {view === 'shop' && (
+            <Shop profile={profile} onBought={async () => { const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh); }} />
+          )}
+
+          {view === 'personal' && <Personal profile={profile} />}
+
           {view === 'dig' && (
             <Dig profile={profile} onDug={async () => { const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh); }} />
           )}
 
-          {view === 'post' && (
+          {view === 'post' && postBlocked && (
+            <>
+              <div className="back-row" onClick={() => { setView('board'); setCurrentPostId(null); }}>‹ 돌아가기</div>
+              <div className="empty-state">해당 기숙사만 볼 수 있는 글입니다.</div>
+            </>
+          )}
+
+          {view === 'post' && !postBlocked && (
             <PostDetail
               profile={profile} profilesById={profilesById} post={post} comments={comments}
               onBack={() => { setView('board'); setCurrentPostId(null); }}
@@ -326,6 +355,7 @@ export default function App() {
               onDeleteComment={(c) => askConfirm('이 댓글을 삭제할까?', () => doDeleteComment(c))}
               onOpenChatRoom={openChatRoomById}
               items={myItems} onDeleteItem={(it) => setItemToDelete(it)}
+              fetchLikes={api.fetchMyLikedPosts}
             />
           )}
 
@@ -352,7 +382,7 @@ export default function App() {
           {view === 'admin' && profile.is_admin && (
             <Admin
               pendingUsers={adminData.pendingUsers} allUsers={adminData.allUsers} allPosts={adminData.allPosts}
-              allComments={adminData.allComments} gambleLogs={adminData.gambleLogs} chatRooms={adminData.chatRooms}
+              allComments={adminData.allComments}
               refresh={loadAdmin} error={adminError}
               actions={{
                 selfId: profile.id,
@@ -361,6 +391,12 @@ export default function App() {
                 setHouse: async (id, house) => { await api.setUserHouse(id, house); loadAdmin(); },
                 toggleAdmin: (u) => askConfirm(`${u.character_name}에게 관리자 권한을 ${u.is_admin ? '해제' : '지급'}할까?`, async () => { await api.toggleAdminRole(u.id); loadAdmin(); }),
                 grantPoints: async (id, amount, message) => { await api.grantPoints(id, amount, message); loadAdmin(); },
+                withdraw: async (u, deleteContent) => {
+                  const r = await api.adminWithdrawUser(u.id, deleteContent);
+                  await loadAdmin();
+                  window.alert(`강제 탈퇴 처리했습니다.${deleteContent ? ` (글 ${r.posts}개, 댓글 ${r.comments}개 삭제)` : ''}`);
+                },
+                restore: (u) => askConfirm(`${u.character_name} 계정을 복구할까?`, async () => { await api.adminRestoreUser(u.id); loadAdmin(); }, false),
                 openPost,
                 togglePinned: async (id) => { await api.togglePinned(id); loadAdmin(); },
                 deletePost: (p) => askConfirm('이 글을 삭제할까?', async () => { await api.deletePost(p.id); loadAdmin(); }),
@@ -376,7 +412,7 @@ export default function App() {
         <button className="fab" onClick={() => { setEditingPost(null); setComposeOpen(true); }} title="글쓰기">+</button>
       )}
 
-      {view === 'post' && post && (
+      {view === 'post' && post && !postBlocked && (
         <CommentInputBar onSubmit={async (text) => { await api.addComment(post.id, null, text); const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh); loadPost(post.id); }} />
       )}
 
@@ -401,7 +437,7 @@ export default function App() {
           onCancel={() => setConfirmState(null)}
           onConfirm={async () => { const fn = confirmState.onConfirm; setConfirmState(null); await fn(); }} />
       )}
-      {notifOpen && <NotifPanel notifications={notifications} onOpen={openNotif} onClose={() => setNotifOpen(false)} />}
+      {notifOpen && <NotifPanel notifications={notifications} onOpen={openNotif} onClose={() => setNotifOpen(false)} onReadAll={readAllNotifs} />}
       <Toasts toasts={toasts} />
     </>
   );

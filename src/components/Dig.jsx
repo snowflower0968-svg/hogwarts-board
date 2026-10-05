@@ -19,6 +19,8 @@ export default function Dig({ profile, onDug }) {
 
   const st = chargeState(profile.dig_charges, profile.dig_charge_at, profile.created_at, now);
   const remaining = st.full ? 0 : st.at + DIG_INTERVAL_MS - now;
+  const bonus = profile.dig_bonus || 0;
+  const available = st.charges + bonus;
 
   async function doDig() {
     const idx = confirmIdx;
@@ -40,7 +42,7 @@ export default function Dig({ profile, onDug }) {
       setInfo({ title: c.empty ? `${c.name} (꽝)` : c.name, description: c.description });
       return;
     }
-    if (st.charges < 1) { setError('조사 가능 횟수가 없습니다. 다음 충전을 기다려 주세요.'); return; }
+    if (available < 1) { setError('조사 가능 횟수가 없습니다. 다음 충전을 기다리거나 상점에서 조사권을 구매하세요.'); return; }
     setConfirmIdx(i);
   }
 
@@ -52,13 +54,14 @@ export default function Dig({ profile, onDug }) {
         <div className="dig-charges">
           <span className="dig-charge-num">{st.charges}</span>
           <span className="dig-charge-max"> / {DIG_MAX_CHARGES}</span>
-          <div className="dig-charge-lbl">조사 가능 횟수</div>
+          <div className="dig-charge-lbl">충전 횟수</div>
         </div>
         <div className="dig-timer">
           {st.full ? '충전 완료 (최대)' : <>다음 충전까지 <b>{fmtDuration(remaining)}</b></>}
+          <div style={{ marginTop: 4 }}>구매·선물 조사권 <b>{bonus}</b>장</div>
         </div>
       </div>
-      <div className="dig-note">2시간마다 1회 충전되고, 최대 3회까지 모입니다. 칸은 모든 캐릭터가 함께 쓰는 공용 판입니다.</div>
+      <div className="dig-note">2시간마다 1회 충전되고, 최대 3회까지 모입니다. 조사권(상점 구매·선물)은 충전분을 다 쓴 뒤 사용되고 개수 제한이 없어요. 칸은 모든 캐릭터가 함께 쓰는 공용 판입니다.</div>
 
       {error && <div className="auth-error" style={{ margin: '0 4px 10px' }}>{error}</div>}
 

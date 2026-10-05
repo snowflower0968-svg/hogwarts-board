@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { boardName, fmtTime, houseName } from '../lib/helpers';
+import { canViewBoard } from './Board';
 
 function roomUnread(room, uid) {
   const mine = (room.chat_reads || []).find((r) => r.user_id === uid);
@@ -7,8 +8,19 @@ function roomUnread(room, uid) {
   return (room.chat_messages || []).some((m) => m.sender_id !== uid && new Date(m.created_at).getTime() > lastRead);
 }
 
-export default function MyPage({ profile, posts, comments, chats, openPost, onEditPost, onDeletePost, onDeleteComment, onOpenChatRoom, initialTab = 'posts', error, items = [], onDeleteItem }) {
+export default function MyPage({ profile, posts, comments, chats, openPost, onEditPost, onDeletePost, onDeleteComment, onOpenChatRoom, initialTab = 'posts', error, items = [], onDeleteItem, fetchLikes }) {
   const [tab, setTab] = useState(initialTab);
+  const [likes, setLikes] = useState(null);
+  const [likesError, setLikesError] = useState('');
+
+  useEffect(() => {
+    if (tab !== 'likes') return undefined;
+    let live = true;
+    setLikesError('');
+    fetchLikes().then((l) => { if (live) setLikes(l); }).catch((e) => { if (live) { setLikes([]); setLikesError(e.message || '불러오지 못했습니다.'); } });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
   const [openItem, setOpenItem] = useState(null);
   const hasUnread = chats.some((r) => roomUnread(r, profile.id));
 
@@ -25,6 +37,7 @@ export default function MyPage({ profile, posts, comments, chats, openPost, onEd
         <div className={`tab-item ${tab === 'posts' ? 'active' : ''}`} onClick={() => setTab('posts')}>내가 쓴 글</div>
         <div className={`tab-item ${tab === 'comments' ? 'active' : ''}`} onClick={() => setTab('comments')}>내가 쓴 댓글</div>
         <div className={`tab-item ${tab === 'chats' ? 'active' : ''}`} onClick={() => setTab('chats')}>채팅{hasUnread && <span className="dot-badge" />}</div>
+        <div className={`tab-item ${tab === 'likes' ? 'active' : ''}`} onClick={() => setTab('likes')}>좋아요한 글</div>
         <div className={`tab-item ${tab === 'items' ? 'active' : ''}`} onClick={() => setTab('items')}>소지품{items.length > 0 ? ` ${items.length}` : ''}</div>
       </div>
 
@@ -53,6 +66,20 @@ export default function MyPage({ profile, posts, comments, chats, openPost, onEd
             <div className="row-sub">{fmtTime(c.created_at)} · "{c.content.slice(0, 40)}"</div>
           </div>
         ))
+      )}
+
+      {tab === 'likes' && (
+        <>
+          {likesError && <div className="auth-error" style={{ margin: '0 4px 10px' }}>{likesError}</div>}
+          {likes === null ? <div className="empty-state">불러오는 중</div>
+            : likes.filter((p) => canViewBoard(profile, p.board_id)).length === 0 ? <div className="empty-state">좋아요한 글이 없습니다.</div>
+              : likes.filter((p) => canViewBoard(profile, p.board_id)).map((p) => (
+                <div key={p.id} className="list-row">
+                  <div className="row-top"><span className="row-title" onClick={() => openPost(p.id)}>{p.title}</span></div>
+                  <div className="row-sub">{boardName(p.board_id)} · {fmtTime(p.created_at)} · 댓글 {p.comments?.length || 0} · 좋아요 {p.post_likes?.length || 0}</div>
+                </div>
+              ))}
+        </>
       )}
 
       {tab === 'items' && (
