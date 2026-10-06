@@ -1062,19 +1062,24 @@ export async function buyShopItem(shopId, qtyRaw) {
   return info;
 }
 
-// ================= 개인 메모 (자유 추가 항목: 양도 불가) =================
+// ================= 개인 기재 (직접 적는 항목: 양도 불가, 수량 선택 가능) =================
+function cleanQty(v) {
+  const n = parseInt(v, 10);
+  if (!n || n < 1) return 1;
+  return Math.min(n, 999);
+}
 export async function fetchNotes(userId) {
   const snap = await getDocs(collection(db, 'users', userId, 'notes'));
   return snap.docs
-    .map((d) => ({ id: d.id, name: d.data().name, note: d.data().note || '', created_at: d.data().createdAt ? ts(d.data().createdAt) : 0 }))
+    .map((d) => ({ id: d.id, name: d.data().name, note: d.data().note || '', qty: d.data().qty || 1, created_at: d.data().createdAt ? ts(d.data().createdAt) : 0 }))
     .sort((a, b) => a.created_at - b.created_at);
 }
-export async function addNote(name, note) {
+export async function addNote(name, note, qty) {
   if (!name || !name.trim()) throw new Error('이름을 입력하세요.');
-  await addDoc(collection(db, 'users', uid(), 'notes'), { name: name.trim(), note: (note || '').trim(), createdAt: serverTimestamp() });
+  await addDoc(collection(db, 'users', uid(), 'notes'), { name: name.trim(), note: (note || '').trim(), qty: cleanQty(qty), createdAt: serverTimestamp() });
 }
-export async function updateNote(id, name, note) {
+export async function updateNote(id, name, note, qty) {
   if (!name || !name.trim()) throw new Error('이름을 입력하세요.');
-  await updateDoc(doc(db, 'users', uid(), 'notes', id), { name: name.trim(), note: (note || '').trim() });
+  await updateDoc(doc(db, 'users', uid(), 'notes', id), { name: name.trim(), note: (note || '').trim(), qty: cleanQty(qty) });
 }
 export async function deleteNote(id) { await deleteDoc(doc(db, 'users', uid(), 'notes', id)); }

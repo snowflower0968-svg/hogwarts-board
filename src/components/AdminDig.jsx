@@ -290,10 +290,10 @@ export function ItemsAdmin({ users }) {
             <RemoveRow key={it.id} item={it} onRemove={(item, q) => run(() => adminRemoveItem(userId, item.id, q, msg.trim()), '회수했습니다.')} />
           ))}
 
-          <div className="field-label">개인 탭에 직접 적은 항목 ({notes.length})</div>
+          <div className="field-label">개인 기재 ({notes.length})</div>
           {notes.length === 0 ? <div className="empty-state" style={{ padding: '18px 0' }}>적은 항목이 없습니다.</div> : notes.map((n) => (
             <div key={n.id} className="list-row">
-              <div className="row-top"><span className="row-title" style={{ cursor: 'default' }}>{n.name}</span></div>
+              <div className="row-top"><span className="row-title" style={{ cursor: 'default' }}>{n.name}{n.qty > 1 ? ` x${n.qty}` : ''}</span></div>
               {n.note && <div className="item-desc">{n.note}</div>}
             </div>
           ))}

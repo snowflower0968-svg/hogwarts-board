@@ -11,6 +11,7 @@ export function ComposeModal({ profile, editingPost, defaultBoard, onCancel, onS
   const [images, setImages] = useState([]);
   const [imagesChanged, setImagesChanged] = useState(false);
   const [loadingImages, setLoadingImages] = useState(!!(editingPost && editingPost.image_count > 0));
+  const [askCancel, setAskCancel] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const fileRef = useRef(null);
@@ -56,7 +57,8 @@ export function ComposeModal({ profile, editingPost, defaultBoard, onCancel, onS
   }
 
   return (
-    <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onCancel()}>
+    <>
+    <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setAskCancel(true)}>
       <div className="modal-card">
         <div className="modal-title">{editingPost ? '글 수정' : '글쓰기'}</div>
         {error && <div className="auth-error">{error}</div>}
@@ -91,17 +93,24 @@ export function ComposeModal({ profile, editingPost, defaultBoard, onCancel, onS
         </form>
       </div>
     </div>
+    {askCancel && (
+      <ConfirmModal
+        message={editingPost ? '글 수정을 취소하시겠습니까?\n수정한 내용이 사라집니다.' : '글쓰기를 취소하시겠습니까?\n작성 중인 내용이 모두 사라집니다.'}
+        cancelLabel="계속 작성" confirmLabel="취소하기"
+        onCancel={() => setAskCancel(false)} onConfirm={onCancel} />
+    )}
+    </>
   );
 }
 
-export function ConfirmModal({ message, danger = true, onCancel, onConfirm }) {
+export function ConfirmModal({ message, danger = true, onCancel, onConfirm, cancelLabel = '취소', confirmLabel = '확인' }) {
   return (
     <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onCancel()}>
       <div className="modal-card small">
-        <div className="confirm-msg">{message}</div>
+        <div className="confirm-msg" style={{ whiteSpace: 'pre-line' }}>{message}</div>
         <div className="modal-actions">
-          <button className="modal-cancel" onClick={onCancel}>취소</button>
-          <button className={`modal-confirm ${danger ? 'danger' : ''}`} onClick={onConfirm}>확인</button>
+          <button className="modal-cancel" onClick={onCancel}>{cancelLabel}</button>
+          <button className={`modal-confirm ${danger ? 'danger' : ''}`} onClick={onConfirm}>{confirmLabel}</button>
         </div>
       </div>
     </div>
@@ -234,13 +243,13 @@ export function IdentityModal({ userId, onClose, onOpenPost }) {
             <div className="row-sub">가입일: {fmtTime(user.created_at)}</div>
             <div className="row-sub">최근 활동: {lastActivity ? fmtTime(lastActivity) : '없음'}</div>
             <div className="row-sub">도박 참여: {gambleCount}회</div>
-            <div className="field-label">개인 탭 - 소지품 ({invItems.length})</div>
+            <div className="field-label">소지품 ({invItems.length})</div>
             {invItems.length === 0 ? <div className="row-sub">없음</div> : invItems.map((it) => (
               <div key={it.id} className="row-sub" style={{ color: 'var(--text)' }}>{it.name}{it.qty > 1 ? ` x${it.qty}` : ''}{it.description ? ` · ${it.description}` : ''}</div>
             ))}
-            <div className="field-label">개인 탭 - 직접 적은 항목 ({notes.length})</div>
+            <div className="field-label">개인 기재 ({notes.length})</div>
             {notes.length === 0 ? <div className="row-sub">없음</div> : notes.map((n) => (
-              <div key={n.id} className="row-sub" style={{ color: 'var(--text)' }}>{n.name}{n.note ? ` · ${n.note}` : ''}</div>
+              <div key={n.id} className="row-sub" style={{ color: 'var(--text)' }}>{n.name}{n.qty > 1 ? ` x${n.qty}` : ''}{n.note ? ` · ${n.note}` : ''}</div>
             ))}
             <div className="field-label">작성 글 ({posts.length})</div>
             {posts.length === 0 ? <div className="row-sub">없음</div> : posts.map((p) => (

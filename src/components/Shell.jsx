@@ -87,7 +87,7 @@ export function Sidebar({ profile, view, currentBoard, selectBoard, openMyPage, 
       <div className={`sidebar-item ${view === 'mypage' ? 'active' : ''}`} onClick={() => { openMyPage(); closeMobile(); }}>
         마이페이지{hasChatUnread && <span className="dot-badge" />}
       </div>
-      <div className={`sidebar-item ${view === 'personal' ? 'active' : ''}`} onClick={() => { openPersonal(); closeMobile(); }}>개인</div>
+      <div className={`sidebar-item ${view === 'personal' ? 'active' : ''}`} onClick={() => { openPersonal(); closeMobile(); }}>소지품</div>
       <div className={`sidebar-item ${view === 'gamble' ? 'active' : ''}`} onClick={() => { openGamble(); closeMobile(); }}>도박장</div>
       <div className={`sidebar-item ${view === 'dig' ? 'active' : ''}`} onClick={() => { openDig(); closeMobile(); }}>간이 조사</div>
       <div className={`sidebar-item ${view === 'shop' ? 'active' : ''}`} onClick={() => { openShop(); closeMobile(); }}>상점</div>

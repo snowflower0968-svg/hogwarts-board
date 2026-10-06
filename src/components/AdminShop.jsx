@@ -40,19 +40,82 @@ export function PointSettingsCard() {
 }
 
 // ---------------- 상점 상품 관리 ----------------
+const KIND_HINT = {
+  item: '구매하면 소지품으로 들어가요.',
+  dig_ticket: '구매하면 조사 횟수가 늘어나요. (최대 3회 충전과 별개, 구매 제한 없음)',
+};
+
+function KindToggle({ value, onChange }) {
+  return (
+    <div className="seg-row" style={{ marginBottom: 6 }}>
+      <button type="button" className={value === 'item' ? 'on' : ''} onClick={() => onChange('item')}>일반 상품</button>
+      <button type="button" className={value === 'dig_ticket' ? 'on' : ''} onClick={() => onChange('dig_ticket')}>간이조사권</button>
+    </div>
+  );
+}
+
+function PriceInput({ value, onChange }) {
+  return (
+    <div className="price-input">
+      <input className="txt-input" type="number" min="0" inputMode="numeric" value={value} onChange={(e) => onChange(e.target.value)} placeholder="가격" />
+      <span>P</span>
+    </div>
+  );
+}
+
+function ShopAddForm() {
+  const [name, setName] = useState('');
+  const [price, setPrice] = useState('10');
+  const [kind, setKind] = useState('item');
+  const [desc, setDesc] = useState('');
+  const [showDesc, setShowDesc] = useState(false);
+  const [err, setErr] = useState('');
+  const [ok, setOk] = useState('');
+
+  async function submit(e) {
+    e.preventDefault();
+    setErr(''); setOk('');
+    try {
+      await saveShopItem(null, { name, description: desc, price, kind });
+      setOk(`"${name.trim()}" 상품을 추가했습니다.`);
+      setName(''); setDesc(''); setShowDesc(false);
+    } catch (ex) { setErr(ex.message || '오류가 발생했습니다.'); }
+  }
+
+  return (
+    <form className="shop-form" onSubmit={submit}>
+      <div className="shop-form-row">
+        <input className="txt-input" style={{ flex: 1, minWidth: 0 }} type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="상품 이름" maxLength={40} />
+        <PriceInput value={price} onChange={setPrice} />
+      </div>
+      <KindToggle value={kind} onChange={setKind} />
+      <div className="kind-hint">{KIND_HINT[kind]}</div>
+      {showDesc
+        ? <input className="txt-input" style={{ width: '100%', marginBottom: 8 }} type="text" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="설명 / 효과 (선택)" />
+        : <button type="button" className="link-btn" style={{ paddingTop: 0, paddingBottom: 8 }} onClick={() => setShowDesc(true)}>+ 설명 추가 (선택)</button>}
+      {err && <div className="auth-error">{err}</div>}
+      {ok && <div className="auth-success">{ok}</div>}
+      <button type="submit" className="shop-form-submit">상품 추가</button>
+    </form>
+  );
+}
+
 function ShopRow({ s, checked, onCheck, now }) {
-  const [name, setName] = useState(s.name);
-  const [desc, setDesc] = useState(s.description);
-  const [price, setPrice] = useState(String(s.price));
-  const [kind, setKind] = useState(s.kind);
-  const [enabled, setEnabled] = useState(s.enabled);
+  const [editing, setEditing] = useState(false);
+  const [f, setF] = useState(null);
   const [err, setErr] = useState('');
   const active = discountActive(s, now);
+  const unit = effectivePrice(s, now);
+  const set = (k) => (v) => setF((prev) => ({ ...prev, [k]: v }));
 
+  function open() {
+    setF({ name: s.name, description: s.description, price: String(s.price), kind: s.kind, enabled: s.enabled });
+    setErr(''); setEditing(true);
+  }
   async function save() {
     setErr('');
-    try { await saveShopItem(s.id, { name, description: desc, price, kind, enabled }); }
-    catch (e) { setErr(e.message); }
+    try { await saveShopItem(s.id, f); setEditing(false); }
+    catch (e) { setErr(e.message || '오류가 발생했습니다.'); }
   }
   async function del() {
     if (!window.confirm(`"${s.name}" 상품을 삭제할까요?`)) return;
@@ -60,29 +123,40 @@ function ShopRow({ s, checked, onCheck, now }) {
   }
 
   return (
-    <div className={`list-row ${checked ? 'selected' : ''}`}>
-      {err && <div className="auth-error">{err}</div>}
-      <div className="admin-row-form">
+    <div className={`shop-admin-row ${checked ? 'selected' : ''} ${!s.enabled ? 'off' : ''}`}>
+      <div className="shop-admin-main">
         <input type="checkbox" className="row-check" checked={checked} onChange={onCheck} title="할인 대상으로 선택" />
-        <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="상품 이름" style={{ flex: 1, minWidth: 90 }} />
-        <input type="number" min="0" value={price} onChange={(e) => setPrice(e.target.value)} style={{ width: 72 }} />
-        <span style={{ fontSize: 12, color: 'var(--text-light)' }}>P</span>
+        <div className="shop-admin-info">
+          <div className="shop-admin-name">
+            {s.name}
+            {s.kind === 'dig_ticket' && <span className="shop-tag">조사권</span>}
+            {!s.enabled && <span className="withdrawn-badge">판매 중지</span>}
+          </div>
+          {s.description && <div className="shop-admin-desc">{s.description}</div>}
+          {active && (
+            <div className="shop-admin-sale">
+              {s.discountPercent}% 할인 중{s.discountUntil ? ` · 남은 시간 ${fmtRemain(s.discountUntil - now)}` : ' · 해제 전까지'}
+            </div>
+          )}
+        </div>
+        <div className="shop-admin-price">{active && <s>{s.price}P</s>}<b>{unit}P</b></div>
+        <button className="log-del" onClick={editing ? () => setEditing(false) : open}>{editing ? '닫기' : '수정'}</button>
       </div>
-      <div className="admin-row-form">
-        <input type="text" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="효과/설명" style={{ flex: 1, minWidth: 140 }} />
-      </div>
-      <div className="admin-row-form">
-        <select className="house-select" value={kind} onChange={(e) => setKind(e.target.value)}>
-          <option value="item">일반 상품 (소지품)</option>
-          <option value="dig_ticket">간이조사권</option>
-        </select>
-        <label style={{ fontSize: 12, color: 'var(--text-mid)' }}><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> 판매 중</label>
-        <button className="accent" onClick={save}>저장</button>
-        <button className="danger" onClick={del}>삭제</button>
-      </div>
-      {active && (
-        <div className="row-sub" style={{ color: 'var(--danger)', fontWeight: 600 }}>
-          {s.discountPercent}% 할인 중 → {effectivePrice(s, now)}P{s.discountUntil ? ` · 남은 시간 ${fmtRemain(s.discountUntil - now)}` : ' · 해제 전까지'}
+
+      {editing && f && (
+        <div className="shop-admin-edit">
+          {err && <div className="auth-error">{err}</div>}
+          <div className="shop-form-row">
+            <input className="txt-input" style={{ flex: 1, minWidth: 0 }} type="text" value={f.name} onChange={(e) => set('name')(e.target.value)} placeholder="상품 이름" maxLength={40} />
+            <PriceInput value={f.price} onChange={set('price')} />
+          </div>
+          <KindToggle value={f.kind} onChange={set('kind')} />
+          <input className="txt-input" style={{ width: '100%', margin: '4px 0 8px' }} type="text" value={f.description} onChange={(e) => set('description')(e.target.value)} placeholder="설명 / 효과 (선택)" />
+          <label className="check-line" style={{ marginTop: 0 }}><input type="checkbox" checked={f.enabled} onChange={(e) => set('enabled')(e.target.checked)} /> 판매 중 (끄면 상점에서 숨겨져요)</label>
+          <div className="admin-row-form" style={{ marginTop: 10 }}>
+            <button className="accent" onClick={save}>저장</button>
+            <button className="danger" onClick={del}>상품 삭제</button>
+          </div>
         </div>
       )}
     </div>
@@ -97,10 +171,6 @@ export function ShopAdmin() {
   const [hours, setHours] = useState('3');
   const [err, setErr] = useState('');
   const [ok, setOk] = useState('');
-  const [nName, setNName] = useState('');
-  const [nDesc, setNDesc] = useState('');
-  const [nPrice, setNPrice] = useState('10');
-  const [nKind, setNKind] = useState('item');
 
   useEffect(() => subscribeShop(setItems), []);
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 20000); return () => clearInterval(t); }, []);
@@ -118,47 +188,34 @@ export function ShopAdmin() {
   return (
     <>
       <div className="field-label">상품 추가</div>
-      <form className="list-row" onSubmit={(e) => { e.preventDefault(); run(async () => { await saveShopItem(null, { name: nName, description: nDesc, price: nPrice, kind: nKind }); setNName(''); setNDesc(''); }, '상품을 추가했습니다.'); }}>
-        <div className="admin-row-form">
-          <input type="text" value={nName} onChange={(e) => setNName(e.target.value)} placeholder="상품 이름" style={{ flex: 1, minWidth: 90 }} />
-          <input type="number" min="0" value={nPrice} onChange={(e) => setNPrice(e.target.value)} style={{ width: 72 }} />
-          <span style={{ fontSize: 12, color: 'var(--text-light)' }}>P</span>
-        </div>
-        <div className="admin-row-form">
-          <input type="text" value={nDesc} onChange={(e) => setNDesc(e.target.value)} placeholder="효과/설명 (구매 후 소지품에서 보임)" style={{ flex: 1, minWidth: 140 }} />
-        </div>
-        <div className="admin-row-form">
-          <select className="house-select" value={nKind} onChange={(e) => setNKind(e.target.value)}>
-            <option value="item">일반 상품 (소지품으로 지급)</option>
-            <option value="dig_ticket">간이조사권 (조사 횟수 +1, 최대 3회 누적과 별개)</option>
-          </select>
-          <button className="accent" type="submit">추가</button>
-        </div>
-      </form>
+      <ShopAddForm />
 
-      <div className="field-label">할인</div>
-      <div className="setting-card">
-        <div className="row-sub" style={{ marginBottom: 8 }}>아래 목록에서 상품을 체크한 뒤 할인율과 시간을 정하세요. 가격은 반올림으로 계산돼요.</div>
-        <div className="setting-line">
-          선택 {sel.size}개 ·
-          <input type="number" min="1" max="100" value={pct} onChange={(e) => setPct(e.target.value)} /> % 할인 ·
-          <input type="number" min="0" step="any" value={hours} onChange={(e) => setHours(e.target.value)} /> 시간 동안
-        </div>
-        <div className="row-sub">시간을 비우면 "할인 해제"를 누르기 전까지 계속 할인돼요. (지금부터 3시간 → 3 입력)</div>
-        {err && <div className="auth-error" style={{ marginTop: 8 }}>{err}</div>}
-        {ok && <div className="auth-success" style={{ marginTop: 8 }}>{ok}</div>}
-        <div className="admin-row-form" style={{ marginTop: 8 }}>
-          <button onClick={() => setSel(new Set(items.map((i) => i.id)))}>전체 선택</button>
-          <button onClick={() => setSel(new Set())}>선택 해제</button>
-          <button className="accent" onClick={() => run(() => setShopDiscount([...sel], pct, hours), '할인을 적용했습니다.')}>할인 적용</button>
-          <button className="danger" onClick={() => run(() => clearShopDiscount([...sel]), '할인을 해제했습니다.')}>할인 해제</button>
-        </div>
+      <div className="field-label" style={{ display: 'flex', alignItems: 'center' }}>
+        상품 목록 ({items.length})
+        {items.length > 0 && <button className="select-toggle" style={{ marginLeft: 'auto' }} onClick={() => setSel(sel.size === items.length ? new Set() : new Set(items.map((i) => i.id)))}>{sel.size === items.length ? '선택 해제' : '전체 선택'}</button>}
       </div>
+      {items.length > 0 && sel.size === 0 && <div className="board-note" style={{ padding: '0 4px 8px' }}>상품 앞의 체크박스를 선택하면 할인을 적용할 수 있어요.</div>}
+      {err && <div className="auth-error" style={{ margin: '0 4px 10px' }}>{err}</div>}
+      {ok && <div className="auth-success" style={{ margin: '0 4px 10px' }}>{ok}</div>}
 
-      <div className="field-label">상품 목록 ({items.length})</div>
+      {sel.size > 0 && (
+        <div className="discount-bar">
+          <div className="discount-title">선택한 상품 {sel.size}개 할인</div>
+          <div className="setting-line">
+            <input type="number" min="1" max="100" value={pct} onChange={(e) => setPct(e.target.value)} /> % 할인 ·
+            <input type="number" min="0" step="any" value={hours} onChange={(e) => setHours(e.target.value)} /> 시간 동안
+          </div>
+          <div className="row-sub">시간을 비우면 "할인 해제"를 누르기 전까지 계속 할인돼요. (가격은 반올림)</div>
+          <div className="admin-row-form" style={{ marginTop: 8 }}>
+            <button className="accent" onClick={() => run(() => setShopDiscount([...sel], pct, hours), '할인을 적용했습니다.')}>할인 적용</button>
+            <button className="danger" onClick={() => run(() => clearShopDiscount([...sel]), '할인을 해제했습니다.')}>할인 해제</button>
+          </div>
+        </div>
+      )}
+
       {items.length === 0 && <div className="empty-state">등록된 상품이 없습니다.</div>}
       {items.map((s) => (
-        <ShopRow key={`${s.id}|${s.name}|${s.price}|${s.description}|${s.kind}|${s.enabled}`} s={s} now={now} checked={sel.has(s.id)} onCheck={() => toggle(s.id)} />
+        <ShopRow key={s.id} s={s} now={now} checked={sel.has(s.id)} onCheck={() => toggle(s.id)} />
       ))}
     </>
   );
