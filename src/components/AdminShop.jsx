@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
-  fetchPointSettings, savePointSettings, subscribeShop, saveShopItem, deleteShopItem,
+  fetchPointSettings, savePointSettings, fetchGalleonRate, saveGalleonRate, subscribeShop, saveShopItem, deleteShopItem,
   setShopDiscount, clearShopDiscount, discountActive, effectivePrice,
 } from '../lib/api';
 import { fmtRemain } from '../lib/helpers';
@@ -12,7 +12,7 @@ export function PointSettingsCard() {
   const [err, setErr] = useState('');
   const [ok, setOk] = useState('');
 
-  useEffect(() => { fetchPointSettings().then((s) => setV({ postEvery: String(s.postEvery), postAmount: String(s.postAmount), commentEvery: String(s.commentEvery), commentAmount: String(s.commentAmount) })); }, []);
+  useEffect(() => { fetchPointSettings().then((x) => setV({ postEvery: String(x.postEvery), postAmount: String(x.postAmount), commentEvery: String(x.commentEvery), commentAmount: String(x.commentAmount) })); }, []);
   if (!v) return null;
   const set = (k) => (e) => setV({ ...v, [k]: e.target.value });
 
@@ -22,21 +22,45 @@ export function PointSettingsCard() {
     catch (e) { setErr(e.message); }
   }
   return (
-    <div className="setting-card">
-      <div className="field-label" style={{ marginTop: 0 }}>자동 지급 기준 (전체 적용)</div>
+    <AdminCard title="포인트 자동 지급 기준" hint="각 회원이 지금까지 쓴 글·댓글 개수를 기준으로 계산해요. 예) 글 1개당 5포인트, 댓글 2개당 1포인트">
       <div className="setting-line">
-        게시글 <input type="number" min="1" value={v.postEvery} onChange={set('postEvery')} /> 개 작성할 때마다
+        게시글 <input type="number" min="1" value={v.postEvery} onChange={set('postEvery')} /> 개마다
         <input type="number" min="0" value={v.postAmount} onChange={set('postAmount')} /> 포인트
       </div>
       <div className="setting-line">
-        댓글(답글 포함) <input type="number" min="1" value={v.commentEvery} onChange={set('commentEvery')} /> 개 작성할 때마다
+        댓글 <input type="number" min="1" value={v.commentEvery} onChange={set('commentEvery')} /> 개마다
         <input type="number" min="0" value={v.commentAmount} onChange={set('commentAmount')} /> 포인트
       </div>
-      <div className="row-sub">각 회원이 지금까지 쓴 글/댓글 개수를 기준으로 계산해요. 예) 글 1개당 5포인트, 댓글 2개당 1포인트</div>
-      {err && <div className="auth-error" style={{ marginTop: 8 }}>{err}</div>}
-      {ok && <div className="auth-success" style={{ marginTop: 8 }}>{ok}</div>}
-      <div className="admin-row-form" style={{ marginTop: 8 }}><button className="accent" onClick={save}>저장</button></div>
-    </div>
+      {err && <div className="auth-error">{err}</div>}
+      {ok && <div className="auth-success">{ok}</div>}
+      <button className="a-btn accent big" onClick={save}>저장</button>
+    </AdminCard>
+  );
+}
+
+// ---------------- 갈레온 환율 ----------------
+export function GalleonRateCard() {
+  const [rate, setRate] = useState(null);
+  const [saved, setSaved] = useState(null);
+  const [err, setErr] = useState('');
+  const [ok, setOk] = useState('');
+  useEffect(() => { fetchGalleonRate().then((r) => { setRate(String(r)); setSaved(String(r)); }); }, []);
+  if (rate === null) return null;
+  async function save() {
+    setErr(''); setOk('');
+    try { await saveGalleonRate(rate); setSaved(rate); setOk('저장했습니다. 지금부터 모든 회원에게 적용됩니다.'); }
+    catch (e) { setErr(e.message); }
+  }
+  return (
+    <AdminCard title="갈레온 환율" hint="회원이 포인트를 갈레온으로 환전할 때 적용돼요.">
+      <div className="a-form-row">
+        <span className="a-inline-note" style={{ flex: 'none', minWidth: 0 }}>갈레온 1개 =</span>
+        <div className="price-input"><input className="txt-input" type="number" min="1" value={rate} onChange={(e) => setRate(e.target.value)} style={{ width: 90 }} /><span>포인트</span></div>
+        <button className="a-btn accent big" disabled={rate === saved} onClick={save}>저장</button>
+      </div>
+      {err && <div className="auth-error" style={{ marginBottom: 0 }}>{err}</div>}
+      {ok && <div className="auth-success" style={{ marginBottom: 0 }}>{ok}</div>}
+    </AdminCard>
   );
 }
 
@@ -44,7 +68,7 @@ export function PointSettingsCard() {
 const KIND_HINT = {
   item: '구매하면 소지품으로 들어가요.',
   dig_ticket: '구매하면 조사 횟수가 늘어나요. (최대 3회 충전과 별개, 구매 제한 없음)',
-  gamble_void: '도박 직후 1회 결과를 없던 일로 돌려요. (1인당 1장까지만 보유, 사용 후 재구매 가능)',
+  gamble_void: '도박 직후에 1회 결과를 없던 일로 되돌립니다. 1회 1장만 보유 가능하며 사용 후 재구매가 가능합니다.',
 };
 const KIND_LABEL = { item: '일반 상품', dig_ticket: '간이조사권', gamble_void: '도박 무효권' };
 const KIND_TAG = { dig_ticket: '조사권', gamble_void: '무효권' };

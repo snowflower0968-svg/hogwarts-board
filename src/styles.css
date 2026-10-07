@@ -465,3 +465,51 @@ body.dark .dig-grid.admin .dig-cell.unassigned{background:#3a3b42;}
 
 /* ---------- 도박 무효권 ---------- */
 .void-btn{margin-top:12px;border:1px solid var(--gold);background:var(--gold-bg);color:var(--gold);font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:10px;}
+
+/* ---------- 관리자: 앱 같은 상단 탭 / 작은 탭 ---------- */
+.a-nav{display:flex;gap:4px;padding:4px;background:var(--surface-2);border-radius:14px;margin:12px 4px 12px;}
+.a-nav button{flex:1;position:relative;border:none;background:transparent;border-radius:11px;padding:11px 2px;font-size:13px;font-weight:600;color:var(--text-mid);white-space:nowrap;}
+.a-nav button.on{background:var(--surface);color:var(--text);box-shadow:0 1px 5px rgba(0,0,0,.1);}
+.a-sub{display:flex;gap:6px;padding:0 4px 12px;overflow-x:auto;scrollbar-width:none;}
+.a-sub::-webkit-scrollbar{display:none;}
+.a-sub button{border:1px solid var(--border);background:var(--surface);color:var(--text-mid);font-size:12.5px;font-weight:600;padding:8px 14px;border-radius:18px;white-space:nowrap;flex-shrink:0;}
+.a-sub button.on{background:var(--accent-bg);border-color:var(--accent);color:var(--accent-dark);}
+.a-badge{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 5px;margin-left:5px;border-radius:9px;background:var(--danger);color:#fff;font-size:10.5px;font-weight:700;vertical-align:middle;}
+body.dark .a-nav button.on{background:var(--surface-3);}
+
+/* ---------- 관리자: 목록/상세 ---------- */
+.avatar{border-radius:50%;background:var(--accent-bg);color:var(--accent-dark);font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.a-search{width:calc(100% - 8px);margin:0 4px 12px;}
+.a-click{cursor:pointer;}
+.a-item.a-click:hover{background:var(--surface-3);}
+.a-chevron{color:var(--text-light);font-size:20px;line-height:1;flex-shrink:0;}
+.a-empty-big{text-align:center;color:var(--text-light);font-size:13.5px;padding:50px 0;}
+.a-profile{display:flex;align-items:center;gap:14px;}
+.a-profile-main{min-width:0;}
+.a-profile-name{font-size:17px;font-weight:700;display:flex;align-items:center;flex-wrap:wrap;gap:4px;}
+.a-tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:0 4px 14px;}
+.a-tiles div{background:var(--surface-2);border-radius:12px;padding:12px 4px;text-align:center;min-width:0;}
+.a-tiles b{display:block;font-size:17px;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;}
+.a-tiles span{font-size:11px;color:var(--text-light);}
+.a-flash{margin:0 4px 12px;}
+.a-chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;}
+.a-chips button{border:1px solid var(--border);background:var(--surface);color:var(--text-mid);font-size:12px;font-weight:600;padding:6px 12px;border-radius:14px;}
+.a-chips button.clear{color:var(--text-light);}
+.a-split{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.a-split .a-btn{width:100%;}
+
+/* ---------- 소지품 페이지: 내 갈레온 / 도박 무효권 카드 ---------- */
+.galleon-card,.void-card{margin:0 4px 14px;padding:14px;border:1px solid var(--border);border-radius:14px;background:var(--surface);}
+.galleon-head,.galleon-ex-head,.void-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:10px;}
+.galleon-head b,.galleon-ex-head b,.void-head b{font-size:14px;}
+.galleon-head span,.galleon-ex-head span{font-size:11.5px;color:var(--text-light);text-align:right;}
+.galleon-row{display:flex;align-items:center;gap:8px;}
+.galleon-input{flex:1;min-width:0;font-size:16px;font-weight:700;}
+.galleon-unit{font-size:13px;color:var(--text-mid);flex-shrink:0;}
+.galleon-sep{height:1px;background:var(--border);margin:14px 0;}
+.galleon-cost{flex:1;min-width:0;font-size:12.5px;color:var(--text-mid);line-height:1.4;}
+.galleon-cost b{color:var(--gold);}
+.galleon-cost span{display:block;font-size:11px;color:var(--text-light);}
+.void-card{border-color:var(--gold);background:var(--gold-bg);}
+.void-sub{font-size:12.5px;color:var(--text-mid);margin-bottom:10px;line-height:1.5;}
+.void-btn:disabled{opacity:.45;}

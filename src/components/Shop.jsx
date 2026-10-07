@@ -26,7 +26,7 @@ function ProductCard({ s, now, points, onBuy, holdingVoid }) {
       </div>
       {s.description && <div className="shop-desc">{s.description}</div>}
       {s.kind === 'dig_ticket' && <div className="shop-desc">구매 횟수 제한 없음 · 최대 3회 충전과 별개로 보관돼요.</div>}
-      {isVoid && <div className="shop-desc">도박 직후에 1회 결과를 없던 일로 되돌려요. 1장까지만 가질 수 있고, 쓰고 나면 다시 살 수 있어요.</div>}
+      {isVoid && <div className="shop-desc">도박 직후에 1회 결과를 없던 일로 되돌립니다. 1회 1장만 보유 가능하며 사용 후 재구매가 가능합니다.</div>}
       {active && s.discountUntil && <div className="shop-timer">할인 종료까지 {fmtRemain(s.discountUntil - now)}</div>}
       <div className="shop-buy">
         {!isVoid && <input type="number" min="1" max="99" value={qty} onChange={(e) => setQty(e.target.value)} />}

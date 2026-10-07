@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchItemsOf, fetchNotes, addNote, updateNote, deleteNote, deleteMyItem } from '../lib/api';
+import { fetchItemsOf, fetchNotes, addNote, updateNote, deleteNote, deleteMyItem, fetchGalleonRate, exchangeToGalleon, setMyGalleon } from '../lib/api';
 import { QtyStepper } from './Ui';
-import { ItemDeleteModal } from './Modals';
+import { ItemDeleteModal, ConfirmModal } from './Modals';
+import VoidTicketCard from './VoidTicket';
 
 function NoteRow({ n, onSave, onDelete }) {
   const [editing, setEditing] = useState(false);
@@ -47,7 +48,67 @@ function NoteRow({ n, onSave, onDelete }) {
   );
 }
 
-export default function Personal({ profile }) {
+// 내 갈레온: 직접 적는 칸 + 포인트 환전
+function GalleonCard({ profile, onRefresh }) {
+  const current = profile.galleon || 0;
+  const [val, setVal] = useState(String(current));
+  const [rate, setRate] = useState(null);
+  const [amt, setAmt] = useState('1');
+  const [ask, setAsk] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [ok, setOk] = useState('');
+  const [err, setErr] = useState('');
+
+  useEffect(() => { setVal(String(profile.galleon || 0)); }, [profile.galleon]);
+  useEffect(() => { fetchGalleonRate().then(setRate); }, []);
+
+  const dirty = (parseInt(val, 10) || 0) !== current;
+  const n = Math.max(1, parseInt(amt, 10) || 1);
+  const cost = rate ? n * rate : 0;
+  const enough = profile.points >= cost;
+
+  async function save() {
+    setOk(''); setErr(''); setBusy(true);
+    try { await setMyGalleon(val); if (onRefresh) await onRefresh(); setOk('저장했습니다.'); }
+    catch (e) { setErr(e.message || '오류가 발생했습니다.'); }
+    finally { setBusy(false); }
+  }
+  async function exchange() {
+    setAsk(false); setOk(''); setErr(''); setBusy(true);
+    try {
+      const r = await exchangeToGalleon(n);
+      if (onRefresh) await onRefresh();
+      setOk(`갈레온 ${n}개로 환전했습니다. (${r.cost}P 사용)`);
+    } catch (e) { setErr(e.message || '오류가 발생했습니다.'); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div className="galleon-card">
+      <div className="galleon-head"><b>내 갈레온</b><span>직접 적는 칸이에요. 관리자가 확인할 수 있어요.</span></div>
+      <div className="galleon-row">
+        <input className="txt-input galleon-input" type="number" min="0" inputMode="numeric" value={val} onChange={(e) => setVal(e.target.value)} aria-label="내 갈레온" />
+        <span className="galleon-unit">갈레온</span>
+        <button type="button" className="pnote-add-btn" disabled={!dirty || busy} onClick={save}>저장</button>
+      </div>
+      <div className="galleon-sep" />
+      <div className="galleon-ex-head"><b>환전</b><span>{rate ? `1 갈레온 = ${rate}P` : '불러오는 중'}</span></div>
+      <div className="galleon-row">
+        <QtyStepper value={amt} onChange={setAmt} max={100000} />
+        <div className="galleon-cost">필요 <b>{cost}P</b><span> (보유 {profile.points}P)</span></div>
+        <button type="button" className="pnote-add-btn" disabled={!rate || !enough || busy} onClick={() => setAsk(true)}>{!enough ? '포인트 부족' : '환전'}</button>
+      </div>
+      {ok && <div className="auth-success" style={{ margin: '10px 0 0' }}>{ok}</div>}
+      {err && <div className="auth-error" style={{ margin: '10px 0 0' }}>{err}</div>}
+      {ask && (
+        <ConfirmModal message={`포인트 ${cost}P를 갈레온 ${n}개로 환전할까요?`} danger={false} confirmLabel="환전"
+          onCancel={() => setAsk(false)} onConfirm={exchange} />
+      )}
+    </div>
+  );
+}
+
+export default function Personal({ profile, onRefresh }) {
   const [items, setItems] = useState([]);
   const [notes, setNotes] = useState([]);
   const [openItem, setOpenItem] = useState(null);
@@ -83,6 +144,9 @@ export default function Personal({ profile }) {
       <div className="board-note" style={{ padding: '10px 4px' }}>
         개인 기재에 직접 적은 항목은 채팅으로 양도할 수 없고, 관리자가 볼 수 있어요.
       </div>
+
+      <GalleonCard profile={profile} onRefresh={onRefresh} />
+      <VoidTicketCard profile={profile} onChanged={onRefresh} />
 
       <div className="field-label">소지품</div>
       {items.length === 0 ? <div className="empty-state" style={{ padding: '18px 0' }}>보유한 소지품이 없습니다.</div> : items.map((it) => (

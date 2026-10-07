@@ -27,7 +27,9 @@ const BOARD_HOUSE = Object.fromEntries(BOARDS.map((b) => [b.id, b.house]));
 
 const CHAT_TTL_MS = 60 * 60 * 1000;
 export const DEFAULT_POINT_SETTINGS = { postEvery: 1, postAmount: 5, commentEvery: 2, commentAmount: 1 };
-const GAMBLE_OUTCOMES = [[10, 1], [5, 4], [3, 8], [2, 15], [1, 22], [-1, 22], [-2, 15], [-3, 8], [-5, 4], [-10, 1]];
+const GAMBLE_OUTCOMES = [[10, 1], [5, 4], [3, 8], [2, 15], [1, 22], [0.5, 10], [0.1, 5], [-1, 22], [-2, 15], [-3, 8], [-5, 4], [-10, 1]];
+// 배율을 곱한 결과 (0.5배, 0.1배처럼 소수가 나와도 포인트는 정수로 반올림)
+export function gambleDelta(bet, multiplier) { return Math.round(bet * multiplier); }
 
 export const DIG_SIZE = 81;
 export const DIG_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2시간마다 1회 충전
@@ -137,7 +139,7 @@ function mapUser(id, d) {
     points: d.points || 0, comment_count: d.commentCount || 0,
     sound_enabled: d.soundEnabled !== false, dark_mode: !!d.darkMode, created_at: ts(d.createdAt),
     dig_charges: d.digCharges ?? null, dig_charge_at: d.digChargeAt ? ts(d.digChargeAt) : null,
-    dig_bonus: d.digBonus || 0, gamble_void: d.gambleVoid || 0, withdrawn: !!d.withdrawn, post_count: d.postCount ?? null,
+    dig_bonus: d.digBonus || 0, gamble_void: d.gambleVoid || 0, galleon: d.galleon || 0, withdrawn: !!d.withdrawn, post_count: d.postCount ?? null,
   };
 }
 export function subscribeOwnStatus(id, cb) {
@@ -501,14 +503,14 @@ export async function spinGamble(bet) {
   let r = Math.random() * total;
   let m = GAMBLE_OUTCOMES[GAMBLE_OUTCOMES.length - 1][0];
   for (const [mult, w] of GAMBLE_OUTCOMES) { if (r < w) { m = mult; break; } r -= w; }
-  const delta = bet * m;
+  const delta = gambleDelta(bet, m);
   const newBal = pts - bet + delta;
   const logRef = doc(collection(db, 'gambleLogs'));
   await setDoc(logRef, { userId: uid(), bet, multiplier: m, resultDelta: delta, balanceAfter: newBal, voided: false, createdAt: serverTimestamp() });
   await updateDoc(userRef, { points: newBal, lastGambleLogId: logRef.id });
   return { multiplier: m, result_delta: delta, balance_after: newBal, log_id: logRef.id };
 }
-// 도박 무효권: 방금 한 도박 1회를 없던 일로 되돌림 (직후에만, 가장 최근 도박만)
+// 도박 무효권: 가장 최근 도박 1회를 없던 일로 되돌림 (다음 도박을 하기 전까지, 화면을 껐다 켜도 사용 가능)
 export async function voidGamble(logId) {
   const me = uid();
   let info;
@@ -523,16 +525,23 @@ export async function voidGamble(logId) {
     if (l.voided) throw new Error('이미 무효 처리된 도박입니다.');
     if (u.lastGambleLogId !== logId) throw new Error('가장 최근 도박에만 사용할 수 있습니다.');
     if ((u.gambleVoid || 0) < 1) throw new Error('도박 무효권이 없습니다.');
-    const createdMs = l.createdAt ? l.createdAt.toMillis() : Date.now();
-    if (Date.now() - createdMs > 5 * 60 * 1000) throw new Error('도박 직후에만 사용할 수 있습니다.');
     const refund = (l.bet || 0) - (l.resultDelta || 0); // 도박 전 잔액으로 되돌림
     const balance = (u.points || 0) + refund;
-    tx.update(userRef, { gambleVoid: (u.gambleVoid || 0) - 1, points: balance, lastGambleLogId: null });
+    tx.update(userRef, { gambleVoid: (u.gambleVoid || 0) - 1, points: balance });
     tx.update(logRef, { voided: true });
     info = { refund, balance, userName: u.characterName };
   });
   await logItem({ action: 'void_use', userId: me, userName: info.userName, itemName: '도박 무효권', itemDescription: '', qty: 1 });
   return info;
+}
+export async function fetchLastGamble() {
+  const us = await getDoc(doc(db, 'users', uid()));
+  const id = us.data()?.lastGambleLogId;
+  if (!id) return null;
+  const ls = await getDoc(doc(db, 'gambleLogs', id));
+  if (!ls.exists()) return null;
+  const l = ls.data();
+  return { id, bet: l.bet, multiplier: l.multiplier, result_delta: l.resultDelta, voided: !!l.voided, created_at: l.createdAt ? ts(l.createdAt) : Date.now() };
 }
 export async function fetchGambleLogsAdmin() {
   const q = query(collection(db, 'gambleLogs'), orderBy('createdAt', 'desc'), limit(200));
@@ -1177,4 +1186,96 @@ export async function backfillPostThumbs(makeThumbFn, onProgress) {
     if (onProgress) onProgress(done, targets.length);
   }
   return { total: targets.length, failed };
+}
+
+
+// ================= 상점 상품 목록 (한 번 읽기) =================
+export async function fetchShopItems() {
+  const snap = await getDocs(collection(db, 'shopItems'));
+  return snap.docs.map((d) => mapShop(d.id, d.data())).sort((a, b) => a.createdMs - b.createdMs);
+}
+
+// ================= 갈레온 =================
+function parseRate(snap) {
+  const n = Math.floor(Number(snap.exists() ? snap.data().pointsPerGalleon : 10));
+  return n >= 1 ? n : 10;
+}
+export async function fetchGalleonRate() {
+  try { return parseRate(await getDoc(doc(db, 'settings', 'galleon'))); } catch (e) { return 10; }
+}
+export async function saveGalleonRate(v) {
+  const n = Math.floor(Number(v));
+  if (!(n >= 1)) throw new Error('환율은 1 이상의 숫자여야 합니다.');
+  await setDoc(doc(db, 'settings', 'galleon'), { pointsPerGalleon: n });
+}
+// 포인트 -> 갈레온 환전 (환율: 갈레온 1개 = N포인트, 관리자가 정함)
+export async function exchangeToGalleon(amountRaw) {
+  const amount = parseInt(amountRaw, 10);
+  if (!amount || amount <= 0 || amount > 1000000) throw new Error('환전할 갈레온 수를 확인하세요.');
+  const me = uid();
+  let info;
+  await runTransaction(db, async (tx) => {
+    const userRef = doc(db, 'users', me);
+    const us = await tx.get(userRef);
+    const rs = await tx.get(doc(db, 'settings', 'galleon'));
+    const rate = parseRate(rs);
+    const cost = amount * rate;
+    const pts = us.data().points || 0;
+    if (pts < cost) throw new Error('포인트가 부족합니다.');
+    const before = us.data().galleon || 0;
+    tx.update(userRef, { points: pts - cost, galleon: before + amount });
+    info = { cost, rate, before, after: before + amount, userName: us.data().characterName };
+  });
+  await logItem({ action: 'galleon_exchange', userId: me, userName: info.userName, itemName: '갈레온', itemDescription: '', qty: amount, price: info.cost, before: info.before, after: info.after });
+  return info;
+}
+// 내 갈레온을 직접 적기 (변경 내역은 관리자 기록에 남음)
+export async function setMyGalleon(raw) {
+  const v = Math.floor(Number(raw));
+  if (!(v >= 0) || v > 999999999) throw new Error('0 이상의 숫자를 입력하세요.');
+  const me = uid();
+  let before = 0; let name = '';
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db, 'users', me);
+    const snap = await tx.get(ref);
+    before = snap.data().galleon || 0;
+    name = snap.data().characterName;
+    if (before !== v) tx.update(ref, { galleon: v });
+  });
+  if (before !== v) await logItem({ action: 'galleon_user_edit', userId: me, userName: name, itemName: '갈레온', itemDescription: '', qty: Math.abs(v - before), before, after: v });
+  return v;
+}
+export async function adminAdjustGalleon(userId, deltaRaw, message) {
+  const delta = parseInt(deltaRaw, 10);
+  if (!delta) throw new Error('수량을 입력하세요.');
+  let before = 0; let after = 0; let name = '';
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db, 'users', userId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('회원 정보를 찾을 수 없습니다.');
+    before = snap.data().galleon || 0;
+    after = before + delta;
+    if (after < 0) throw new Error('보유한 갈레온보다 많이 회수할 수 없습니다.');
+    name = snap.data().characterName;
+    tx.update(ref, { galleon: after });
+  });
+  await logItem({ action: delta > 0 ? 'galleon_admin_grant' : 'galleon_admin_remove', userId, userName: name, itemName: '갈레온', itemDescription: '', qty: Math.abs(delta), before, after });
+  await addDoc(collection(db, 'notifications'), { userId, type: 'admin_item', message: `갈레온 ${delta > 0 ? '지급' : '회수'}: ${Math.abs(delta)}${message ? ' · ' + message : ''}`, read: false, createdAt: serverTimestamp() });
+}
+// 관리자가 도박 무효권 지급/회수 (1인당 1장까지)
+export async function adminGrantGambleVoid(userId, delta, message) {
+  if (delta !== 1 && delta !== -1) throw new Error('도박 무효권은 1장씩 지급·회수할 수 있습니다.');
+  let name = '';
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db, 'users', userId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('회원 정보를 찾을 수 없습니다.');
+    const cur = snap.data().gambleVoid || 0;
+    if (delta > 0 && cur >= 1) throw new Error('이미 도박 무효권을 가지고 있습니다. (1장까지 보유 가능)');
+    if (delta < 0 && cur < 1) throw new Error('회수할 도박 무효권이 없습니다.');
+    name = snap.data().characterName;
+    tx.update(ref, { gambleVoid: delta > 0 ? 1 : 0 });
+  });
+  await logItem({ action: delta > 0 ? 'admin_grant' : 'admin_remove', userId, userName: name, itemName: '도박 무효권', itemDescription: '', qty: 1 });
+  await addDoc(collection(db, 'notifications'), { userId, type: 'admin_item', message: `도박 무효권 ${delta > 0 ? '지급' : '회수'}${message ? ' · ' + message : ''}`, read: false, createdAt: serverTimestamp() });
 }

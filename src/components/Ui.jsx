@@ -28,3 +28,22 @@ export function AdminCard({ title, right, hint, children }) {
     </section>
   );
 }
+
+// 위쪽 구역 이동용 탭 (main: 크게 꽉 차게 / sub: 작은 알약)
+export function SegTabs({ items, value, onChange, variant = 'main' }) {
+  return (
+    <div className={variant === 'main' ? 'a-nav' : 'a-sub'}>
+      {items.map((it) => (
+        <button key={it.id} type="button" className={value === it.id ? 'on' : ''} onClick={() => onChange(it.id)}>
+          {it.label}
+          {it.badge ? <span className="a-badge">{it.badge}</span> : null}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function Avatar({ name, size = 40 }) {
+  const ch = (name || '?').trim().charAt(0) || '?';
+  return <div className="avatar" style={{ width: size, height: size, fontSize: Math.round(size * 0.42) }}>{ch}</div>;
+}

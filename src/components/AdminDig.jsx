@@ -2,13 +2,12 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   fetchDigRewards, saveDigReward, deleteDigReward, subscribeDigPublic, subscribeDigSecret,
   adminNewRound, adminAssignCell, adminRandomizeUndug, fetchDigLogs, fetchDigConfig, saveDigConfig,
-  fetchItemsOf, adminGrantItem, adminRemoveItem, fetchItemLogs,
-  deleteDigLogs, deleteItemLogs, fetchProfileById, fetchNotes, adminGrantDigTickets,
+  fetchItemLogs, deleteDigLogs, deleteItemLogs,
   blankCountFor, DIG_SIZE,
 } from '../lib/api';
 import { fmtDateTime } from '../lib/helpers';
 import { LogList } from './AdminLogs';
-import { QtyStepper, AdminCard } from './Ui';
+import { AdminCard } from './Ui';
 import { useCloseGuard } from './Modals';
 
 const cellPos = (i) => `${Math.floor(i / 9) + 1}행 ${(i % 9) + 1}열`;
@@ -247,127 +246,15 @@ export function DigLogsAdmin() {
   );
 }
 
-// ---------------- 소지품 관리 ----------------
-function HeldRow({ item, onRemove }) {
-  const [qty, setQty] = useState('1');
-  return (
-    <div className="a-item">
-      <div className="a-item-main">
-        <div className="a-item-title">{item.name} <span className="pnote-qty">x{item.qty}</span></div>
-        {item.description && <div className="a-item-sub">{item.description}</div>}
-      </div>
-      <QtyStepper value={qty} onChange={setQty} max={item.qty} />
-      <button className="a-btn danger" onClick={() => onRemove(item, qty)}>회수</button>
-    </div>
-  );
-}
-
-export function ItemsAdmin({ users }) {
-  const [userId, setUserId] = useState('');
-  const [items, setItems] = useState([]);
-  const [rewards, setRewards] = useState([]);
-  const [prof, setProf] = useState(null);
-  const [notes, setNotes] = useState([]);
-  const [name, setName] = useState('');
-  const [desc, setDesc] = useState('');
-  const [qty, setQty] = useState('1');
-  const [tQty, setTQty] = useState('1');
-  const [msg, setMsg] = useState('');
-  const [showMore, setShowMore] = useState(false);
-  const [err, setErr] = useState('');
-  const [ok, setOk] = useState('');
-
-  useEffect(() => { fetchDigRewards().then(setRewards).catch(() => {}); }, []);
-  const load = useCallback(async () => {
-    if (!userId) { setItems([]); setNotes([]); setProf(null); return; }
-    const [it, nt, pf] = await Promise.all([fetchItemsOf(userId), fetchNotes(userId).catch(() => []), fetchProfileById(userId)]);
-    setItems(it); setNotes(nt); setProf(pf);
-  }, [userId]);
-  useEffect(() => { load(); }, [load]);
-
-  async function run(fn, okMsg) {
-    setErr(''); setOk('');
-    try { await fn(); await load(); setOk(okMsg); } catch (e) { setErr(e.message || '오류가 발생했습니다.'); }
-  }
-
-  return (
-    <>
-      <AdminCard title="캐릭터 선택">
-        <select className="house-select" style={{ width: '100%', padding: '10px' }} value={userId} onChange={(e) => { setUserId(e.target.value); setOk(''); setErr(''); }}>
-          <option value="">캐릭터를 선택하세요</option>
-          {users.filter((u) => u.approved && !u.withdrawn).map((u) => <option key={u.id} value={u.id}>{u.character_name} ({u.login_id})</option>)}
-        </select>
-        {prof && (
-          <div className="a-stats">
-            <div><b>{prof.points}</b><span>포인트</span></div>
-            <div><b>{prof.dig_bonus || 0}</b><span>간이조사권</span></div>
-            <div><b>{prof.gamble_void || 0}</b><span>도박 무효권</span></div>
-          </div>
-        )}
-        {userId && (
-          <input className="txt-input" style={{ width: '100%', marginTop: 10 }} type="text" value={msg} onChange={(e) => setMsg(e.target.value)} placeholder="지급/회수 알림에 함께 보낼 메시지 (선택)" />
-        )}
-        {err && <div className="auth-error" style={{ marginTop: 10, marginBottom: 0 }}>{err}</div>}
-        {ok && <div className="auth-success" style={{ marginTop: 10, marginBottom: 0 }}>{ok}</div>}
-      </AdminCard>
-
-      {userId && (
-        <>
-          <AdminCard title="소지품 지급">
-            <select className="house-select" style={{ width: '100%', padding: '10px', marginBottom: 8 }} value="" onChange={(e) => {
-              const r = rewards.find((x) => x.id === e.target.value);
-              if (r) { setName(r.name); setDesc(r.description || ''); }
-            }}>
-              <option value="">보상 목록에서 불러오기 (선택)</option>
-              {rewards.filter((r) => !r.empty).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-            </select>
-            <div className="a-form-row">
-              <input className="txt-input" style={{ flex: 1, minWidth: 0 }} type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="소지품 이름" maxLength={40} />
-              <QtyStepper value={qty} onChange={setQty} />
-              <button className="a-btn accent big" onClick={() => run(() => adminGrantItem(userId, name, desc, qty, msg.trim()), '지급했습니다.')}>지급</button>
-            </div>
-            {showMore
-              ? <input className="txt-input" style={{ width: '100%' }} type="text" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="효과 / 설명 (선택)" />
-              : <button type="button" className="link-btn" style={{ paddingTop: 0 }} onClick={() => setShowMore(true)}>+ 설명 추가 (선택)</button>}
-          </AdminCard>
-
-          <AdminCard title="간이조사권">
-            <div className="a-form-row" style={{ marginBottom: 0 }}>
-              <QtyStepper value={tQty} onChange={setTQty} />
-              <button className="a-btn accent big" onClick={() => run(() => adminGrantDigTickets(userId, Math.abs(parseInt(tQty, 10) || 0), msg.trim()), '조사권을 지급했습니다.')}>지급</button>
-              <button className="a-btn danger big" onClick={() => run(() => adminGrantDigTickets(userId, -Math.abs(parseInt(tQty, 10) || 0), msg.trim()), '조사권을 회수했습니다.')}>회수</button>
-            </div>
-          </AdminCard>
-
-          <AdminCard title={`보유 소지품 (${items.length})`}>
-            {items.length === 0 ? <div className="a-empty">보유한 소지품이 없습니다.</div> : items.map((it) => (
-              <HeldRow key={it.id} item={it} onRemove={(item, q) => run(() => adminRemoveItem(userId, item.id, q, msg.trim()), '회수했습니다.')} />
-            ))}
-          </AdminCard>
-
-          <AdminCard title={`개인 기재 (${notes.length})`} hint="캐릭터가 직접 적은 항목이에요. (보기 전용)">
-            {notes.length === 0 ? <div className="a-empty">적은 항목이 없습니다.</div> : notes.map((n) => (
-              <div key={n.id} className="a-item">
-                <div className="a-item-main">
-                  <div className="a-item-title">{n.name}{n.qty > 1 && <span className="pnote-qty">x{n.qty}</span>}</div>
-                  {n.note && <div className="a-item-sub">{n.note}</div>}
-                </div>
-              </div>
-            ))}
-          </AdminCard>
-        </>
-      )}
-    </>
-  );
-}
-
 // ---------------- 소지품 기록 ----------------
 const ACTION_LABEL = {
   user_delete: '본인 삭제', admin_grant: '관리자 지급', admin_remove: '관리자 회수', transfer: '양도',
   dig_get: '조사로 획득', shop_buy: '상점 구매', void_use: '무효권 사용',
+  galleon_exchange: '환전', galleon_admin_grant: '갈레온 지급', galleon_admin_remove: '갈레온 회수', galleon_user_edit: '직접 수정',
 };
 const ACTION_TONE = {
-  user_delete: 'danger', admin_remove: 'danger', admin_grant: 'ok', dig_get: 'ok', shop_buy: 'gold', void_use: 'gold', transfer: '',
+  user_delete: 'danger', admin_remove: 'danger', galleon_admin_remove: 'danger', admin_grant: 'ok', galleon_admin_grant: 'ok', dig_get: 'ok',
+  shop_buy: 'gold', void_use: 'gold', galleon_exchange: 'gold', galleon_user_edit: '', transfer: '',
 };
 export function ItemLogsAdmin() {
   const [logs, setLogs] = useState(null);
@@ -384,7 +271,11 @@ export function ItemLogsAdmin() {
             <span className="log-name">{l.userName}{l.action === 'transfer' ? ` → ${l.targetName}` : ''}</span>
             <span className={`log-tag ${ACTION_TONE[l.action] || ''}`}>{ACTION_LABEL[l.action] || l.action}</span>
           </div>
-          <div className="log-line2">{l.itemName}{l.qty > 1 ? ` x${l.qty}` : ''}{l.price != null ? ` · ${l.price}P` : ''} · {fmtDateTime(l.created_at)}</div>
+          <div className="log-line2">
+            {l.itemName === '갈레온' && l.before != null
+              ? `갈레온 ${l.before} → ${l.after}${l.price != null ? ` · ${l.price}P 사용` : ''}`
+              : `${l.itemName}${l.qty > 1 ? ` x${l.qty}` : ''}${l.price != null ? ` · ${l.price}P` : ''}`} · {fmtDateTime(l.created_at)}
+          </div>
         </>
       )}
     />

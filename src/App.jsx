@@ -313,7 +313,7 @@ export default function App() {
             <Shop profile={profile} onBought={async () => { const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh); }} />
           )}
 
-          {view === 'personal' && <Personal profile={profile} />}
+          {view === 'personal' && <Personal profile={profile} onRefresh={async () => { const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh); }} />}
 
           {view === 'dig' && (
             <Dig profile={profile} onDug={async () => { const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh); }} />
@@ -356,15 +356,13 @@ export default function App() {
           )}
 
           {view === 'gamble' && (
-            <Gamble profile={profile} onSpin={async (bet) => {
-              const r = await api.spinGamble(bet);
-              const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh);
-              return r;
-            }} onVoid={async (logId) => {
-              const r = await api.voidGamble(logId);
-              const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh);
-              return r;
-            }} />
+            <Gamble profile={profile}
+              onSpin={async (bet) => {
+                const r = await api.spinGamble(bet);
+                const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh);
+                return r;
+              }}
+              onRefresh={async () => { const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh); }} />
           )}
 
           {view === 'chat' && (
