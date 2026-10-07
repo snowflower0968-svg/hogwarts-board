@@ -411,3 +411,57 @@ body.dark .dig-grid.admin .dig-cell.unassigned{background:#3a3b42;}
 .shop-admin-edit .txt-input{background:var(--surface);}
 .discount-bar{margin:0 4px 10px;padding:12px 14px;border:1px solid var(--accent);border-radius:12px;background:var(--accent-bg);}
 .discount-title{font-size:13px;font-weight:700;color:var(--accent-dark);margin-bottom:8px;}
+
+/* ---------- 게시글 목록: 사진 더 있음 표시 (+1 +2 +3) ---------- */
+.post-thumb-wrap{position:relative;width:68px;height:68px;flex-shrink:0;}
+.post-thumb-wrap .post-thumb{width:100%;height:100%;}
+.thumb-more{position:absolute;top:-6px;right:-6px;min-width:22px;height:22px;padding:0 6px;border-radius:11px;background:rgba(55,55,60,.78);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;box-sizing:border-box;border:1.5px solid var(--surface);}
+
+/* ---------- 관리자 화면 공통 카드/행 ---------- */
+.a-card{margin:0 4px 14px;padding:14px;border:1px solid var(--border);border-radius:14px;background:var(--surface);}
+.a-card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;}
+.a-card-head h3{font-size:14px;font-weight:700;margin:0;color:var(--text);}
+.a-hint{font-size:12px;color:var(--text-light);line-height:1.6;margin:0 0 10px;}
+.a-pill{font-size:11px;font-weight:600;color:var(--text-mid);background:var(--surface-2);padding:4px 10px;border-radius:10px;white-space:nowrap;}
+.a-empty{font-size:12.5px;color:var(--text-light);text-align:center;padding:14px 0;}
+.a-item{display:flex;align-items:center;gap:10px;padding:11px 0;border-top:1px solid var(--border);}
+.a-item:first-of-type{border-top:none;}
+.a-item.col{flex-direction:column;align-items:stretch;gap:0;}
+.a-item-line{display:flex;align-items:center;gap:10px;}
+.a-item-main{flex:1;min-width:0;}
+.a-item-title{font-size:13.5px;font-weight:600;word-break:break-word;color:var(--text);}
+.a-item-sub{font-size:12px;color:var(--text-light);margin-top:2px;line-height:1.5;word-break:break-word;}
+.a-item-meta{text-align:right;flex-shrink:0;font-size:11px;color:var(--text-light);line-height:1.5;}
+.a-item-meta b{display:block;font-size:13.5px;color:var(--accent-dark);}
+.a-edit{margin-top:10px;padding:12px;background:var(--surface-2);border-radius:10px;display:flex;flex-direction:column;gap:8px;}
+.a-edit .txt-input{background:var(--surface);}
+.a-add{margin-top:6px;padding-top:12px;border-top:1px dashed var(--border);display:flex;flex-direction:column;gap:6px;}
+.a-form-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;}
+.a-inline-note{flex:1;min-width:140px;font-size:12.5px;color:var(--text-mid);}
+.a-inline-note b{color:var(--text);}
+.a-inline-note span{color:var(--text-light);font-size:11.5px;}
+.a-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;}
+.a-btn{border:none;background:var(--surface-2);color:var(--text-mid);font-size:12px;font-weight:600;padding:8px 12px;border-radius:8px;flex-shrink:0;white-space:nowrap;}
+.a-btn:hover{filter:brightness(.97);}
+.a-btn.accent{background:var(--accent-bg);color:var(--accent-dark);}
+.a-btn.danger{background:var(--danger-bg);color:var(--danger);}
+.a-btn.big{height:40px;padding:0 16px;font-size:13px;}
+.a-btn:disabled{opacity:.45;}
+.a-stats{display:flex;gap:8px;margin-top:12px;}
+.a-stats div{flex:1;background:var(--surface-2);border-radius:10px;padding:10px 6px;text-align:center;}
+.a-stats b{display:block;font-size:16px;color:var(--text);}
+.a-stats span{font-size:11px;color:var(--text-light);}
+.a-legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:11.5px;color:var(--text-mid);}
+.a-legend span{display:inline-flex;align-items:center;gap:5px;}
+.a-legend .lg{width:12px;height:12px;border-radius:4px;display:inline-block;}
+.a-legend .lg.gold{background:var(--gold-bg);border:1px solid var(--gold);}
+.a-legend .lg.miss{background:var(--surface-2);border:1px solid var(--border);}
+.a-legend .lg.none{background:#d3d3d8;}
+.a-legend .lg.dug{background:#9a9aa3;}
+
+/* ---------- 기록 목록 태그 색 ---------- */
+.log-tag.ok{background:var(--accent-bg);color:var(--accent-dark);}
+.log-tag.gold{background:var(--gold-bg);color:var(--gold);}
+
+/* ---------- 도박 무효권 ---------- */
+.void-btn{margin-top:12px;border:1px solid var(--gold);background:var(--gold-bg);color:var(--gold);font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:10px;}

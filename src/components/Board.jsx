@@ -72,10 +72,14 @@ export default function Board({ profile, boardId, posts, openPost, onBulkDelete 
                 <span>{fmtTime(p.created_at)}</span>
                 <span>좋아요 {p.post_likes?.length || 0}</span>
                 <span>댓글 {p.comments?.length || 0}</span>
-                {p.image_count > 0 && <span>사진 {p.image_count}</span>}
               </div>
             </div>
-            {p.thumb && <img className="post-thumb" src={p.thumb} alt="" />}
+            {p.thumb && (
+              <div className="post-thumb-wrap">
+                <img className="post-thumb" src={p.thumb} alt="" />
+                {p.image_count > 1 && <span className="thumb-more">+{p.image_count - 1}</span>}
+              </div>
+            )}
           </div>
         </div>
       ))}

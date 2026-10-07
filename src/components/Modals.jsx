@@ -87,7 +87,7 @@ export function ComposeModal({ profile, editingPost, defaultBoard, onCancel, onS
             </div>
           )}
           <div className="modal-actions">
-            <button type="button" className="modal-cancel" onClick={onCancel}>취소</button>
+            <button type="button" className="modal-cancel" onClick={() => setAskCancel(true)}>취소</button>
             <button type="submit" className="modal-confirm" disabled={busy || loadingImages}>{editingPost ? '수정 완료' : '등록하기'}</button>
           </div>
         </form>
@@ -101,6 +101,19 @@ export function ComposeModal({ profile, editingPost, defaultBoard, onCancel, onS
     )}
     </>
   );
+}
+
+// 입력하던 내용이 있을 때 바깥을 눌러도 바로 닫히지 않게 확인창을 띄움
+export function useCloseGuard(dirty, onClose, message = '닫으시겠습니까?\n입력한 내용이 사라집니다.') {
+  const [asking, setAsking] = useState(false);
+  const overlayClick = (e) => {
+    if (e.target !== e.currentTarget) return;
+    if (dirty) setAsking(true); else onClose();
+  };
+  const guard = asking ? (
+    <ConfirmModal message={message} cancelLabel="계속 입력" confirmLabel="닫기" onCancel={() => setAsking(false)} onConfirm={onClose} />
+  ) : null;
+  return { overlayClick, guard };
 }
 
 export function ConfirmModal({ message, danger = true, onCancel, onConfirm, cancelLabel = '취소', confirmLabel = '확인' }) {
@@ -124,6 +137,7 @@ export function GiftModal({ balance, items = [], onCancel, onSendPoints, onSendI
   const [qty, setQty] = useState('1');
   const [error, setError] = useState('');
   const selected = items.find((i) => i.id === itemId);
+  const { overlayClick, guard } = useCloseGuard(!!amount || !!itemId, onCancel);
 
   async function submit(e) {
     e.preventDefault();
@@ -142,7 +156,8 @@ export function GiftModal({ balance, items = [], onCancel, onSendPoints, onSendI
   }
 
   return (
-    <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onCancel()}>
+    <>
+    <div className="modal-overlay" onClick={overlayClick}>
       <div className="modal-card">
         <div className="modal-title">선물 보내기</div>
         <div className="seg-row">
@@ -171,12 +186,15 @@ export function GiftModal({ balance, items = [], onCancel, onSendPoints, onSendI
         </form>
       </div>
     </div>
+    {guard}
+    </>
   );
 }
 
 export function ItemDeleteModal({ item, onCancel, onConfirm }) {
   const [qty, setQty] = useState('1');
   const [error, setError] = useState('');
+  const { overlayClick, guard } = useCloseGuard(qty !== '1', onCancel);
   async function go() {
     const q = parseInt(qty, 10);
     if (!q || q <= 0 || q > item.qty) { setError('수량을 확인하세요.'); return; }
@@ -184,7 +202,8 @@ export function ItemDeleteModal({ item, onCancel, onConfirm }) {
     catch (err) { setError(err.message || '오류가 발생했습니다.'); }
   }
   return (
-    <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onCancel()}>
+    <>
+    <div className="modal-overlay" onClick={overlayClick}>
       <div className="modal-card small">
         <div className="confirm-msg">
           <b>{item.name}</b> 을(를) 삭제합니다.<br />정말로 삭제하시겠습니까?
@@ -199,6 +218,8 @@ export function ItemDeleteModal({ item, onCancel, onConfirm }) {
         </div>
       </div>
     </div>
+    {guard}
+    </>
   );
 }
 

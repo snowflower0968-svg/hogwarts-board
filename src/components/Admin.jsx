@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { HOUSES } from '../lib/api';
-import { boardName, fmtTime } from '../lib/helpers';
+import { boardName, fmtTime, makeThumb } from '../lib/helpers';
+import { backfillPostThumbs } from '../lib/api';
 import { DigAdmin, DigLogsAdmin, ItemsAdmin, ItemLogsAdmin } from './AdminDig';
 import { GambleAdmin, ChatAdmin } from './AdminLogs';
 import { PointSettingsCard, ShopAdmin } from './AdminShop';
@@ -25,6 +26,29 @@ function PointsRow({ u, onGrant }) {
         <input type="text" value={msg} onChange={(e) => setMsg(e.target.value)} placeholder="메시지(선택)" style={{ flex: 1, minWidth: 110 }} />
         <button className="accent" onClick={() => go(1)}>지급</button>
         <button className="danger" onClick={() => go(-1)}>차감</button>
+      </div>
+    </div>
+  );
+}
+
+function ThumbBackfill() {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  async function run() {
+    setBusy(true); setMsg('사진 글을 찾는 중...');
+    try {
+      const r = await backfillPostThumbs(makeThumb, (done, total) => setMsg(`대표 사진 만드는 중... ${done}/${total}`));
+      setMsg(r.total === 0 ? '대표 사진이 필요한 글이 없어요. (이미 모두 있어요)' : `완료! ${r.total - r.failed}개 만들었어요.${r.failed ? ` (${r.failed}개는 실패)` : ''}`);
+    } catch (e) { setMsg(e.message || '오류가 발생했습니다.'); }
+    finally { setBusy(false); }
+  }
+  return (
+    <div className="setting-card">
+      <div className="field-label" style={{ marginTop: 0 }}>대표 사진 일괄 생성</div>
+      <div className="row-sub">예전에 사진을 올린 글은 목록에 대표 사진이 없어요. 한 번에 만들어줍니다.</div>
+      <div className="admin-row-form" style={{ marginTop: 8 }}>
+        <button className="accent" disabled={busy} onClick={run}>{busy ? '진행 중...' : '대표 사진 만들기'}</button>
+        {msg && <span style={{ fontSize: 12, color: 'var(--text-mid)' }}>{msg}</span>}
       </div>
     </div>
   );
@@ -127,6 +151,7 @@ export default function Admin({ pendingUsers, allUsers, allPosts, allComments, r
         </>
       )}
 
+      {tab === 'posts' && <ThumbBackfill />}
       {tab === 'posts' && (
         allPosts.length === 0 ? <div className="empty-state">등록된 글이 없습니다.</div> : allPosts.map((p) => (
           <div key={p.id} className="list-row">

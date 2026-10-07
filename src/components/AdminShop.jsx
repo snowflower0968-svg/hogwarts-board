@@ -4,6 +4,7 @@ import {
   setShopDiscount, clearShopDiscount, discountActive, effectivePrice,
 } from '../lib/api';
 import { fmtRemain } from '../lib/helpers';
+import { AdminCard } from './Ui';
 
 // ---------------- 포인트 자동 지급 기준 ----------------
 export function PointSettingsCard() {
@@ -43,13 +44,17 @@ export function PointSettingsCard() {
 const KIND_HINT = {
   item: '구매하면 소지품으로 들어가요.',
   dig_ticket: '구매하면 조사 횟수가 늘어나요. (최대 3회 충전과 별개, 구매 제한 없음)',
+  gamble_void: '도박 직후 1회 결과를 없던 일로 돌려요. (1인당 1장까지만 보유, 사용 후 재구매 가능)',
 };
+const KIND_LABEL = { item: '일반 상품', dig_ticket: '간이조사권', gamble_void: '도박 무효권' };
+const KIND_TAG = { dig_ticket: '조사권', gamble_void: '무효권' };
 
 function KindToggle({ value, onChange }) {
   return (
     <div className="seg-row" style={{ marginBottom: 6 }}>
-      <button type="button" className={value === 'item' ? 'on' : ''} onClick={() => onChange('item')}>일반 상품</button>
-      <button type="button" className={value === 'dig_ticket' ? 'on' : ''} onClick={() => onChange('dig_ticket')}>간이조사권</button>
+      {Object.keys(KIND_LABEL).map((k) => (
+        <button key={k} type="button" className={value === k ? 'on' : ''} onClick={() => onChange(k)}>{KIND_LABEL[k]}</button>
+      ))}
     </div>
   );
 }
@@ -83,7 +88,7 @@ function ShopAddForm() {
   }
 
   return (
-    <form className="shop-form" onSubmit={submit}>
+    <form onSubmit={submit}>
       <div className="shop-form-row">
         <input className="txt-input" style={{ flex: 1, minWidth: 0 }} type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="상품 이름" maxLength={40} />
         <PriceInput value={price} onChange={setPrice} />
@@ -114,6 +119,8 @@ function ShopRow({ s, checked, onCheck, now }) {
   }
   async function save() {
     setErr('');
+    const textChanged = s.kind === 'item' && (f.name.trim() !== s.name || f.description.trim() !== s.description);
+    if (textChanged && !window.confirm('이름이나 설명을 바꾸면, 이미 구매된 소지품과 별개 항목으로 표시돼요.\n(이미 산 사람의 소지품은 예전 이름 그대로 남아요)\n그래도 저장할까요?')) return;
     try { await saveShopItem(s.id, f); setEditing(false); }
     catch (e) { setErr(e.message || '오류가 발생했습니다.'); }
   }
@@ -129,7 +136,7 @@ function ShopRow({ s, checked, onCheck, now }) {
         <div className="shop-admin-info">
           <div className="shop-admin-name">
             {s.name}
-            {s.kind === 'dig_ticket' && <span className="shop-tag">조사권</span>}
+            {KIND_TAG[s.kind] && <span className="shop-tag">{KIND_TAG[s.kind]}</span>}
             {!s.enabled && <span className="withdrawn-badge">판매 중지</span>}
           </div>
           {s.description && <div className="shop-admin-desc">{s.description}</div>}
@@ -151,7 +158,8 @@ function ShopRow({ s, checked, onCheck, now }) {
             <PriceInput value={f.price} onChange={set('price')} />
           </div>
           <KindToggle value={f.kind} onChange={set('kind')} />
-          <input className="txt-input" style={{ width: '100%', margin: '4px 0 8px' }} type="text" value={f.description} onChange={(e) => set('description')(e.target.value)} placeholder="설명 / 효과 (선택)" />
+          <input className="txt-input" style={{ width: '100%', margin: '4px 0 6px' }} type="text" value={f.description} onChange={(e) => set('description')(e.target.value)} placeholder="설명 / 효과 (선택)" />
+          {s.kind === 'item' && <div className="a-hint" style={{ marginBottom: 8 }}>이름이나 설명을 바꾸면 이미 산 소지품과는 별개 항목으로 표시돼요.</div>}
           <label className="check-line" style={{ marginTop: 0 }}><input type="checkbox" checked={f.enabled} onChange={(e) => set('enabled')(e.target.checked)} /> 판매 중 (끄면 상점에서 숨겨져요)</label>
           <div className="admin-row-form" style={{ marginTop: 10 }}>
             <button className="accent" onClick={save}>저장</button>
@@ -187,36 +195,36 @@ export function ShopAdmin() {
 
   return (
     <>
-      <div className="field-label">상품 추가</div>
-      <ShopAddForm />
+      <AdminCard title="상품 추가"><ShopAddForm /></AdminCard>
 
-      <div className="field-label" style={{ display: 'flex', alignItems: 'center' }}>
-        상품 목록 ({items.length})
-        {items.length > 0 && <button className="select-toggle" style={{ marginLeft: 'auto' }} onClick={() => setSel(sel.size === items.length ? new Set() : new Set(items.map((i) => i.id)))}>{sel.size === items.length ? '선택 해제' : '전체 선택'}</button>}
-      </div>
-      {items.length > 0 && sel.size === 0 && <div className="board-note" style={{ padding: '0 4px 8px' }}>상품 앞의 체크박스를 선택하면 할인을 적용할 수 있어요.</div>}
-      {err && <div className="auth-error" style={{ margin: '0 4px 10px' }}>{err}</div>}
-      {ok && <div className="auth-success" style={{ margin: '0 4px 10px' }}>{ok}</div>}
+      <AdminCard
+        title={`상품 목록 (${items.length})`}
+        right={items.length > 0 ? <button className="select-toggle" onClick={() => setSel(sel.size === items.length ? new Set() : new Set(items.map((i) => i.id)))}>{sel.size === items.length ? '선택 해제' : '전체 선택'}</button> : null}
+        hint={items.length > 0 && sel.size === 0 ? '상품 앞의 체크박스를 선택하면 할인을 적용할 수 있어요.' : undefined}
+      >
+        {err && <div className="auth-error">{err}</div>}
+        {ok && <div className="auth-success">{ok}</div>}
 
-      {sel.size > 0 && (
-        <div className="discount-bar">
-          <div className="discount-title">선택한 상품 {sel.size}개 할인</div>
-          <div className="setting-line">
-            <input type="number" min="1" max="100" value={pct} onChange={(e) => setPct(e.target.value)} /> % 할인 ·
-            <input type="number" min="0" step="any" value={hours} onChange={(e) => setHours(e.target.value)} /> 시간 동안
+        {sel.size > 0 && (
+          <div className="discount-bar" style={{ margin: '0 0 10px' }}>
+            <div className="discount-title">선택한 상품 {sel.size}개 할인</div>
+            <div className="setting-line">
+              <input type="number" min="1" max="100" value={pct} onChange={(e) => setPct(e.target.value)} /> % 할인 ·
+              <input type="number" min="0" step="any" value={hours} onChange={(e) => setHours(e.target.value)} /> 시간 동안
+            </div>
+            <div className="row-sub">시간을 비우면 "할인 해제"를 누르기 전까지 계속 할인돼요. (가격은 반올림)</div>
+            <div className="a-actions">
+              <button className="a-btn accent big" onClick={() => run(() => setShopDiscount([...sel], pct, hours), '할인을 적용했습니다.')}>할인 적용</button>
+              <button className="a-btn danger big" onClick={() => run(() => clearShopDiscount([...sel]), '할인을 해제했습니다.')}>할인 해제</button>
+            </div>
           </div>
-          <div className="row-sub">시간을 비우면 "할인 해제"를 누르기 전까지 계속 할인돼요. (가격은 반올림)</div>
-          <div className="admin-row-form" style={{ marginTop: 8 }}>
-            <button className="accent" onClick={() => run(() => setShopDiscount([...sel], pct, hours), '할인을 적용했습니다.')}>할인 적용</button>
-            <button className="danger" onClick={() => run(() => clearShopDiscount([...sel]), '할인을 해제했습니다.')}>할인 해제</button>
-          </div>
-        </div>
-      )}
+        )}
 
-      {items.length === 0 && <div className="empty-state">등록된 상품이 없습니다.</div>}
-      {items.map((s) => (
-        <ShopRow key={s.id} s={s} now={now} checked={sel.has(s.id)} onCheck={() => toggle(s.id)} />
-      ))}
+        {items.length === 0 && <div className="a-empty">등록된 상품이 없습니다.</div>}
+        {items.map((s) => (
+          <ShopRow key={s.id} s={s} now={now} checked={sel.has(s.id)} onCheck={() => toggle(s.id)} />
+        ))}
+      </AdminCard>
     </>
   );
 }

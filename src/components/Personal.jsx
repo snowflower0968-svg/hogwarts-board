@@ -1,17 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchItemsOf, fetchNotes, addNote, updateNote, deleteNote } from '../lib/api';
-
-function QtyStepper({ value, onChange, min = 1, max = 999 }) {
-  const n = parseInt(value, 10) || min;
-  const set = (v) => onChange(String(Math.min(max, Math.max(min, v))));
-  return (
-    <div className="qty-step">
-      <button type="button" onClick={() => set(n - 1)} disabled={n <= min} aria-label="줄이기">−</button>
-      <input type="number" inputMode="numeric" min={min} max={max} value={value} onChange={(e) => onChange(e.target.value)} onBlur={() => set(n)} aria-label="개수" />
-      <button type="button" onClick={() => set(n + 1)} disabled={n >= max} aria-label="늘리기">+</button>
-    </div>
-  );
-}
+import { fetchItemsOf, fetchNotes, addNote, updateNote, deleteNote, deleteMyItem } from '../lib/api';
+import { QtyStepper } from './Ui';
+import { ItemDeleteModal } from './Modals';
 
 function NoteRow({ n, onSave, onDelete }) {
   const [editing, setEditing] = useState(false);
@@ -61,6 +51,7 @@ export default function Personal({ profile }) {
   const [items, setItems] = useState([]);
   const [notes, setNotes] = useState([]);
   const [openItem, setOpenItem] = useState(null);
+  const [toDelete, setToDelete] = useState(null);
   const [name, setName] = useState('');
   const [qty, setQty] = useState('1');
   const [note, setNote] = useState('');
@@ -100,6 +91,7 @@ export default function Personal({ profile }) {
             <div className="pnote-title">{it.name}{it.qty > 1 && <span className="pnote-qty">x{it.qty}</span>}</div>
             {openItem === it.id && <div className="pnote-note">{it.description ? it.description : '입력된 효과가 없습니다.'}</div>}
           </div>
+          <div className="row-actions"><button className="danger" onClick={(e) => { e.stopPropagation(); setToDelete(it); }}>삭제</button></div>
         </div>
       ))}
 
@@ -121,6 +113,11 @@ export default function Personal({ profile }) {
           onSave={async (id, nm, nt, q) => { await updateNote(id, nm, nt, q); await load(); }}
           onDelete={async (id) => { await deleteNote(id); await load(); }} />
       ))}
+
+      {toDelete && (
+        <ItemDeleteModal item={toDelete} onCancel={() => setToDelete(null)}
+          onConfirm={async (id, q) => { await deleteMyItem(id, q); setToDelete(null); await load(); }} />
+      )}
     </>
   );
 }

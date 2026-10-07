@@ -62,6 +62,17 @@ export function effectivePrice(item, nowMs) {
   return Math.round((item.price * (100 - Number(item.discountPercent))) / 100);
 }
 
+// 꽝 칸 수: 전체 칸 수 x 꽝 비율 (소수점은 버림). 예) 81칸 50% -> 40칸
+export function blankCountFor(n, percent) {
+  const p = Math.min(100, Math.max(0, Number(percent) || 0));
+  return Math.min(n, Math.floor((n * p) / 100 + 1e-9));
+}
+function shuffled(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i -= 1) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+
 // 확률(가중치) 기반 랜덤 선택
 export function pickWeighted(list) {
   const items = list.filter((r) => (Number(r.weight) || 0) > 0);
@@ -126,7 +137,7 @@ function mapUser(id, d) {
     points: d.points || 0, comment_count: d.commentCount || 0,
     sound_enabled: d.soundEnabled !== false, dark_mode: !!d.darkMode, created_at: ts(d.createdAt),
     dig_charges: d.digCharges ?? null, dig_charge_at: d.digChargeAt ? ts(d.digChargeAt) : null,
-    dig_bonus: d.digBonus || 0, withdrawn: !!d.withdrawn, post_count: d.postCount ?? null,
+    dig_bonus: d.digBonus || 0, gamble_void: d.gambleVoid || 0, withdrawn: !!d.withdrawn, post_count: d.postCount ?? null,
   };
 }
 export function subscribeOwnStatus(id, cb) {
@@ -492,9 +503,36 @@ export async function spinGamble(bet) {
   for (const [mult, w] of GAMBLE_OUTCOMES) { if (r < w) { m = mult; break; } r -= w; }
   const delta = bet * m;
   const newBal = pts - bet + delta;
-  await updateDoc(userRef, { points: newBal });
-  await addDoc(collection(db, 'gambleLogs'), { userId: uid(), bet, multiplier: m, resultDelta: delta, balanceAfter: newBal, createdAt: serverTimestamp() });
-  return { multiplier: m, result_delta: delta, balance_after: newBal };
+  const logRef = doc(collection(db, 'gambleLogs'));
+  await setDoc(logRef, { userId: uid(), bet, multiplier: m, resultDelta: delta, balanceAfter: newBal, voided: false, createdAt: serverTimestamp() });
+  await updateDoc(userRef, { points: newBal, lastGambleLogId: logRef.id });
+  return { multiplier: m, result_delta: delta, balance_after: newBal, log_id: logRef.id };
+}
+// 도박 무효권: 방금 한 도박 1회를 없던 일로 되돌림 (직후에만, 가장 최근 도박만)
+export async function voidGamble(logId) {
+  const me = uid();
+  let info;
+  await runTransaction(db, async (tx) => {
+    const userRef = doc(db, 'users', me);
+    const logRef = doc(db, 'gambleLogs', logId);
+    const us = await tx.get(userRef);
+    const ls = await tx.get(logRef);
+    if (!ls.exists() || ls.data().userId !== me) throw new Error('도박 기록을 찾을 수 없습니다.');
+    const u = us.data();
+    const l = ls.data();
+    if (l.voided) throw new Error('이미 무효 처리된 도박입니다.');
+    if (u.lastGambleLogId !== logId) throw new Error('가장 최근 도박에만 사용할 수 있습니다.');
+    if ((u.gambleVoid || 0) < 1) throw new Error('도박 무효권이 없습니다.');
+    const createdMs = l.createdAt ? l.createdAt.toMillis() : Date.now();
+    if (Date.now() - createdMs > 5 * 60 * 1000) throw new Error('도박 직후에만 사용할 수 있습니다.');
+    const refund = (l.bet || 0) - (l.resultDelta || 0); // 도박 전 잔액으로 되돌림
+    const balance = (u.points || 0) + refund;
+    tx.update(userRef, { gambleVoid: (u.gambleVoid || 0) - 1, points: balance, lastGambleLogId: null });
+    tx.update(logRef, { voided: true });
+    info = { refund, balance, userName: u.characterName };
+  });
+  await logItem({ action: 'void_use', userId: me, userName: info.userName, itemName: '도박 무효권', itemDescription: '', qty: 1 });
+  return info;
 }
 export async function fetchGambleLogsAdmin() {
   const q = query(collection(db, 'gambleLogs'), orderBy('createdAt', 'desc'), limit(200));
@@ -502,7 +540,7 @@ export async function fetchGambleLogsAdmin() {
   const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
   const profiles = await fetchProfilesFull(items.map((i) => i.userId));
   return items.map((i) => ({
-    id: i.id, user_id: i.userId, bet: i.bet, multiplier: i.multiplier, result_delta: i.resultDelta, balance_after: i.balanceAfter,
+    id: i.id, user_id: i.userId, voided: !!i.voided, bet: i.bet, multiplier: i.multiplier, result_delta: i.resultDelta, balance_after: i.balanceAfter,
     created_at: ts(i.createdAt), profiles: profiles[i.userId] || null,
   }));
 }
@@ -850,8 +888,34 @@ const pubRefOf = () => doc(db, 'dig', 'public');
 const secRefOf = () => doc(db, 'dig', 'secret');
 const blankPublicCells = () => Array.from({ length: DIG_SIZE }, () => ({ dug: false, name: '', description: '', empty: false }));
 const blankSecretCell = () => ({ assigned: false, rewardId: null, name: '', description: '', empty: false, by: null, byName: null, at: null });
+const missCell = () => ({ assigned: true, rewardId: null, name: '꽝', description: '', empty: true, by: null, byName: null, at: null });
 const cellFromReward = (r) => ({ assigned: true, rewardId: r.id, name: r.name, description: r.description || '', empty: !!r.empty, by: null, byName: null, at: null });
-const randomSecretCells = (catalog) => Array.from({ length: DIG_SIZE }, () => { const r = pickWeighted(catalog); return r ? cellFromReward(r) : blankSecretCell(); });
+// n칸을 새로 배치: 꽝은 정해진 개수만큼 무작위 위치에, 나머지는 보상 확률대로
+const usableRewards = (catalog) => catalog.filter((r) => !r.empty && r.weight > 0);
+function randomizeCells(n, catalog, blankPercent) {
+  const pool = usableRewards(catalog);
+  const missSet = new Set(shuffled(Array.from({ length: n }, (_, i) => i)).slice(0, blankCountFor(n, blankPercent)));
+  return Array.from({ length: n }, (_, i) => {
+    if (missSet.has(i)) return missCell();
+    const r = pickWeighted(pool);
+    return r ? cellFromReward(r) : blankSecretCell();
+  });
+}
+const randomSecretCells = (catalog, blankPercent) => randomizeCells(DIG_SIZE, catalog, blankPercent);
+
+const cfgRefOf = () => doc(db, 'dig', 'config');
+export async function fetchDigConfig() {
+  try {
+    const snap = await getDoc(cfgRefOf());
+    const p = snap.exists() ? Number(snap.data().blankPercent) : 0;
+    return { blankPercent: Number.isFinite(p) ? Math.min(100, Math.max(0, p)) : 0 };
+  } catch (e) { return { blankPercent: 0 }; }
+}
+export async function saveDigConfig({ blankPercent }) {
+  const p = Number(blankPercent);
+  if (!(p >= 0 && p <= 100)) throw new Error('꽝 비율은 0~100 사이로 입력하세요.');
+  await setDoc(cfgRefOf(), { blankPercent: p });
+}
 
 export async function fetchDigRewards() {
   const snap = await getDocs(collection(db, 'digRewards'));
@@ -872,12 +936,12 @@ export function subscribeDigSecret(cb) { return onSnapshot(secRefOf(), (s) => cb
 
 // 새 판 시작 (처음 시작 / 전체 랜덤 + 초기화)
 export async function adminNewRound() {
-  const catalog = await fetchDigRewards();
+  const [catalog, cfg] = await Promise.all([fetchDigRewards(), fetchDigConfig()]);
   await runTransaction(db, async (tx) => {
     const p = await tx.get(pubRefOf());
     const round = (p.exists() ? (p.data().round || 1) : 0) + 1;
     tx.set(pubRefOf(), { round, cells: blankPublicCells() });
-    tx.set(secRefOf(), { round, cells: randomSecretCells(catalog) });
+    tx.set(secRefOf(), { round, cells: randomSecretCells(catalog, cfg.blankPercent) });
   });
 }
 export async function adminAssignCell(index, reward) {
@@ -887,26 +951,30 @@ export async function adminAssignCell(index, reward) {
     if (!p.exists() || !sc.exists()) throw new Error('먼저 "새 판 시작"을 눌러주세요.');
     if (p.data().cells[index].dug) throw new Error('이미 조사된 칸은 바꿀 수 없습니다.');
     const cells = sc.data().cells.slice();
-    cells[index] = reward ? cellFromReward(reward) : blankSecretCell();
+    // reward: 보상 객체 / 'miss'(꽝) / null(미지정)
+    cells[index] = reward === 'miss' ? missCell() : reward ? cellFromReward(reward) : blankSecretCell();
     tx.update(secRefOf(), { cells });
   });
 }
 export async function adminRandomizeUndug() {
-  const catalog = await fetchDigRewards();
-  if (!catalog.some((r) => r.weight > 0)) throw new Error('확률이 0보다 큰 보상을 먼저 등록하세요.');
+  const [catalog, cfg] = await Promise.all([fetchDigRewards(), fetchDigConfig()]);
+  if (!usableRewards(catalog).length && cfg.blankPercent < 100) throw new Error('확률이 0보다 큰 보상을 먼저 등록하세요.');
   await runTransaction(db, async (tx) => {
     const p = await tx.get(pubRefOf());
     const sc = await tx.get(secRefOf());
     if (!p.exists() || !sc.exists()) throw new Error('먼저 "새 판 시작"을 눌러주세요.');
     const cells = sc.data().cells.slice();
-    p.data().cells.forEach((pc, i) => { if (!pc.dug) cells[i] = cellFromReward(pickWeighted(catalog)); });
+    const undug = [];
+    p.data().cells.forEach((pc, i) => { if (!pc.dug) undug.push(i); });
+    const fresh = randomizeCells(undug.length, catalog, cfg.blankPercent);
+    undug.forEach((idx, k) => { cells[idx] = fresh[k]; });
     tx.update(secRefOf(), { cells });
   });
 }
 
 export async function digCell(index) {
   const me = uid();
-  const catalog = await fetchDigRewards();
+  const [catalog, cfg] = await Promise.all([fetchDigRewards(), fetchDigConfig()]);
   let result;
   await runTransaction(db, async (tx) => {
     const userRef = doc(db, 'users', me);
@@ -925,7 +993,7 @@ export async function digCell(index) {
     const cells = sec.cells.slice();
     let cell = { ...cells[index] };
     if (!cell.assigned) {
-      const pick = pickWeighted(catalog);
+      const pick = pickWeighted(usableRewards(catalog));
       if (!pick) throw new Error('이 칸은 아직 보상이 준비되지 않았습니다.');
       cell = { ...cellFromReward(pick) };
     }
@@ -950,7 +1018,7 @@ export async function digCell(index) {
     const round = pub.round || 1;
     if (allDug) {
       tx.set(pubRefOf(), { round: round + 1, cells: blankPublicCells() });
-      tx.set(secRefOf(), { round: round + 1, cells: randomSecretCells(catalog) });
+      tx.set(secRefOf(), { round: round + 1, cells: randomSecretCells(catalog, cfg.blankPercent) });
     } else {
       tx.update(pubRefOf(), { cells: newPub });
       tx.update(secRefOf(), { cells });
@@ -987,10 +1055,11 @@ export async function adminGrantDigTickets(userId, deltaRaw, message) {
 }
 
 // ================= 상점 =================
+const SHOP_KINDS = ['item', 'dig_ticket', 'gamble_void'];
 function mapShop(id, d) {
   return {
     id, name: d.name, description: d.description || '', price: Number(d.price) || 0,
-    kind: d.kind === 'dig_ticket' ? 'dig_ticket' : 'item', enabled: d.enabled !== false,
+    kind: SHOP_KINDS.includes(d.kind) ? d.kind : 'item', enabled: d.enabled !== false,
     discountPercent: Number(d.discountPercent) || 0, discountUntil: d.discountUntil ?? null,
     createdMs: d.createdAt ? ts(d.createdAt) : 0,
   };
@@ -1004,7 +1073,7 @@ export async function saveShopItem(id, data) {
   if (!data.name || !data.name.trim()) throw new Error('상품 이름을 입력하세요.');
   const price = Math.floor(Number(data.price));
   if (!(price >= 0)) throw new Error('가격은 0 이상의 숫자여야 합니다.');
-  const payload = { name: data.name.trim(), description: (data.description || '').trim(), price, kind: data.kind === 'dig_ticket' ? 'dig_ticket' : 'item', enabled: data.enabled !== false };
+  const payload = { name: data.name.trim(), description: (data.description || '').trim(), price, kind: SHOP_KINDS.includes(data.kind) ? data.kind : 'item', enabled: data.enabled !== false };
   if (id) await updateDoc(doc(db, 'shopItems', id), payload);
   else await addDoc(collection(db, 'shopItems'), { ...payload, discountPercent: 0, discountUntil: null, createdAt: serverTimestamp() });
 }
@@ -1044,13 +1113,18 @@ export async function buyShopItem(shopId, qtyRaw) {
     const total = unit * qty;
     const pts = us.data().points || 0;
     if (pts < total) throw new Error('포인트가 부족합니다.');
+    if (shop.kind === 'gamble_void') {
+      if (qty !== 1) throw new Error('도박 무효권은 한 번에 1장만 살 수 있어요.');
+      if ((us.data().gambleVoid || 0) >= 1) throw new Error('이미 도박 무효권을 가지고 있어요. 사용한 뒤에 다시 살 수 있어요.');
+    }
     let itemRef = null; let itemSnap = null;
-    if (shop.kind !== 'dig_ticket') {
+    if (shop.kind === 'item') {
       itemRef = doc(db, 'users', me, 'items', itemKey(shop.name, shop.description));
       itemSnap = await tx.get(itemRef);
     }
     const patch = { points: pts - total };
     if (shop.kind === 'dig_ticket') patch.digBonus = increment(qty);
+    if (shop.kind === 'gamble_void') patch.gambleVoid = 1;
     tx.update(userRef, patch);
     if (itemRef) {
       if (itemSnap.exists()) tx.update(itemRef, { qty: increment(qty) });
@@ -1083,3 +1157,24 @@ export async function updateNote(id, name, note, qty) {
   await updateDoc(doc(db, 'users', uid(), 'notes', id), { name: name.trim(), note: (note || '').trim(), qty: cleanQty(qty) });
 }
 export async function deleteNote(id) { await deleteDoc(doc(db, 'users', uid(), 'notes', id)); }
+
+
+// ================= 대표 사진 일괄 생성 (예전 글용) =================
+export async function backfillPostThumbs(makeThumbFn, onProgress) {
+  const snap = await getDocs(collection(db, 'posts'));
+  const targets = snap.docs.filter((d) => (d.data().imageCount || 0) > 0 && !d.data().thumb);
+  let done = 0; let failed = 0;
+  for (const d of targets) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const imgs = await fetchPostImages(d.id);
+      // eslint-disable-next-line no-await-in-loop
+      const t = imgs.length ? await makeThumbFn(imgs[0]) : null;
+      // eslint-disable-next-line no-await-in-loop
+      if (t) await updateDoc(d.ref, { thumb: t }); else failed += 1;
+    } catch (e) { failed += 1; }
+    done += 1;
+    if (onProgress) onProgress(done, targets.length);
+  }
+  return { total: targets.length, failed };
+}

@@ -12,7 +12,7 @@ import Chat from './components/Chat';
 import Settings from './components/Settings';
 import Admin from './components/Admin';
 import Toasts from './components/Toasts';
-import { ComposeModal, ConfirmModal, GiftModal, IdentityModal, ItemDeleteModal } from './components/Modals';
+import { ComposeModal, ConfirmModal, GiftModal, IdentityModal } from './components/Modals';
 import Dig from './components/Dig';
 import Shop from './components/Shop';
 import Personal from './components/Personal';
@@ -52,8 +52,6 @@ export default function App() {
   const [giftRoomId, setGiftRoomId] = useState(null);
   const [giftItems, setGiftItems] = useState([]);
   const [postImages, setPostImages] = useState([]);
-  const [myItems, setMyItems] = useState([]);
-  const [itemToDelete, setItemToDelete] = useState(null);
   const [identityUserId, setIdentityUserId] = useState(null);
 
   // ---------------- boot / auth ----------------
@@ -174,8 +172,8 @@ export default function App() {
   const loadMyPage = useCallback(async () => {
     if (!profile) return;
     setMyPageError('');
-    const results = await Promise.allSettled([api.fetchMyPosts(profile.id), api.fetchMyComments(profile.id), api.fetchMyChats(profile.id), api.fetchItemsOf(profile.id)]);
-    const [pR, cR, chR, itR] = results;
+    const results = await Promise.allSettled([api.fetchMyPosts(profile.id), api.fetchMyComments(profile.id), api.fetchMyChats(profile.id)]);
+    const [pR, cR, chR] = results;
     const errors = results.filter((r) => r.status === 'rejected').map((r) => r.reason?.message || String(r.reason));
     if (errors.length) {
       console.error('마이페이지 데이터 로딩 실패:', results);
@@ -184,7 +182,6 @@ export default function App() {
     setMyPosts(pR.status === 'fulfilled' ? pR.value : []);
     setMyComments(cR.status === 'fulfilled' ? cR.value : []);
     setMyChats(chR.status === 'fulfilled' ? chR.value : []);
-    setMyItems(itR.status === 'fulfilled' ? itR.value : []);
   }, [profile]);
   useEffect(() => { if (profile && view === 'mypage') loadMyPage(); }, [profile, view, loadMyPage]);
 
@@ -354,7 +351,6 @@ export default function App() {
               onDeletePost={(p) => askConfirm('이 글을 삭제할까?', () => doDeletePost(p))}
               onDeleteComment={(c) => askConfirm('이 댓글을 삭제할까?', () => doDeleteComment(c))}
               onOpenChatRoom={openChatRoomById}
-              items={myItems} onDeleteItem={(it) => setItemToDelete(it)}
               fetchLikes={api.fetchMyLikedPosts}
             />
           )}
@@ -362,6 +358,10 @@ export default function App() {
           {view === 'gamble' && (
             <Gamble profile={profile} onSpin={async (bet) => {
               const r = await api.spinGamble(bet);
+              const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh);
+              return r;
+            }} onVoid={async (logId) => {
+              const r = await api.voidGamble(logId);
               const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh);
               return r;
             }} />
@@ -424,10 +424,6 @@ export default function App() {
         <GiftModal balance={profile.points} items={giftItems} onCancel={() => setGiftRoomId(null)}
           onSendPoints={async (amt) => { await api.sendGift(giftRoomId, amt); const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh); setGiftRoomId(null); loadChat(giftRoomId); }}
           onSendItem={async (itemId, qty) => { await api.sendGiftItem(giftRoomId, itemId, qty); setGiftRoomId(null); loadChat(giftRoomId); }} />
-      )}
-      {itemToDelete && (
-        <ItemDeleteModal item={itemToDelete} onCancel={() => setItemToDelete(null)}
-          onConfirm={async (id, qty) => { await api.deleteMyItem(id, qty); setItemToDelete(null); loadMyPage(); }} />
       )}
       {identityUserId && (
         <IdentityModal userId={identityUserId} onClose={() => setIdentityUserId(null)} onOpenPost={openPost} />

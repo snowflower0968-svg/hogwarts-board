@@ -8,7 +8,7 @@ function roomUnread(room, uid) {
   return (room.chat_messages || []).some((m) => m.sender_id !== uid && new Date(m.created_at).getTime() > lastRead);
 }
 
-export default function MyPage({ profile, posts, comments, chats, openPost, onEditPost, onDeletePost, onDeleteComment, onOpenChatRoom, initialTab = 'posts', error, items = [], onDeleteItem, fetchLikes }) {
+export default function MyPage({ profile, posts, comments, chats, openPost, onEditPost, onDeletePost, onDeleteComment, onOpenChatRoom, initialTab = 'posts', error, fetchLikes }) {
   const [tab, setTab] = useState(initialTab);
   const [likes, setLikes] = useState(null);
   const [likesError, setLikesError] = useState('');
@@ -21,7 +21,6 @@ export default function MyPage({ profile, posts, comments, chats, openPost, onEd
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
-  const [openItem, setOpenItem] = useState(null);
   const hasUnread = chats.some((r) => roomUnread(r, profile.id));
 
   return (
@@ -38,7 +37,6 @@ export default function MyPage({ profile, posts, comments, chats, openPost, onEd
         <div className={`tab-item ${tab === 'comments' ? 'active' : ''}`} onClick={() => setTab('comments')}>내가 쓴 댓글</div>
         <div className={`tab-item ${tab === 'chats' ? 'active' : ''}`} onClick={() => setTab('chats')}>채팅{hasUnread && <span className="dot-badge" />}</div>
         <div className={`tab-item ${tab === 'likes' ? 'active' : ''}`} onClick={() => setTab('likes')}>좋아요한 글</div>
-        <div className={`tab-item ${tab === 'items' ? 'active' : ''}`} onClick={() => setTab('items')}>소지품{items.length > 0 ? ` ${items.length}` : ''}</div>
       </div>
 
       {tab === 'posts' && (
@@ -80,20 +78,6 @@ export default function MyPage({ profile, posts, comments, chats, openPost, onEd
                 </div>
               ))}
         </>
-      )}
-
-      {tab === 'items' && (
-        items.length === 0 ? <div className="empty-state">보유한 소지품이 없습니다.</div> : items.map((it) => (
-          <div key={it.id} className="list-row">
-            <div className="row-top">
-              <span className="row-title" onClick={() => setOpenItem(openItem === it.id ? null : it.id)}>{it.name}{it.qty > 1 ? ` x${it.qty}` : ''}</span>
-              <div className="row-actions"><button className="danger" onClick={() => onDeleteItem(it)}>삭제</button></div>
-            </div>
-            {openItem === it.id && (
-              <div className="item-desc">{it.description ? it.description : '입력된 효과가 없습니다.'}</div>
-            )}
-          </div>
-        ))
       )}
 
       {tab === 'chats' && (

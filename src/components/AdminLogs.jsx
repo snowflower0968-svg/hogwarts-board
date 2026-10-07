@@ -66,38 +66,30 @@ export function GambleAdmin() {
   const seen = new Set();
   logs.forEach((g) => { if (!seen.has(g.user_id)) { seen.add(g.user_id); users.push({ id: g.user_id, name: g.profiles?.character_name || '(탈퇴)' }); } });
   const shown = who ? logs.filter((g) => g.user_id === who) : logs;
-  const net = shown.reduce((sum, g) => sum + (g.result_delta || 0), 0);
-  const wins = shown.filter((g) => g.result_delta > 0).length;
-  const losses = shown.filter((g) => g.result_delta < 0).length;
 
   return (
-    <>
-      <div className="gstat-row">
-        <div className="gstat"><div className="num">{shown.length}</div><div className="lbl">참여 횟수</div></div>
-        <div className="gstat"><div className={`num ${net >= 0 ? 'pos' : 'neg'}`}>{net >= 0 ? '+' : ''}{net}</div><div className="lbl">손익 합계(P)</div></div>
-        <div className="gstat"><div className="num">{wins} / {losses}</div><div className="lbl">이김 / 짐</div></div>
-      </div>
-      <LogList
-        items={shown}
-        emptyText="도박 기록이 없습니다."
-        header={(
-          <select className="house-select" value={who} onChange={(e) => setWho(e.target.value)} style={{ marginLeft: 'auto' }}>
-            <option value="">전체 캐릭터</option>
-            {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-          </select>
-        )}
-        onDelete={async (ids) => { await deleteGambleLogs(ids); setLogs((prev) => prev.filter((g) => !ids.includes(g.id))); }}
-        renderRow={(g) => (
-          <>
-            <div className="log-line1">
-              <span className="log-name">{g.profiles?.character_name || '(탈퇴)'} <span className="log-id">{g.profiles?.login_id}</span></span>
-              <span className={`log-delta ${g.result_delta >= 0 ? 'pos' : 'neg'}`}>{g.result_delta >= 0 ? '+' : ''}{g.result_delta}P</span>
-            </div>
-            <div className="log-line2">베팅 {g.bet}P · {g.multiplier}배 · 잔액 {g.balance_after}P · {fmtDateTime(g.created_at)}</div>
-          </>
-        )}
-      />
-    </>
+    <LogList
+      items={shown}
+      emptyText="도박 기록이 없습니다."
+      header={(
+        <select className="house-select" value={who} onChange={(e) => setWho(e.target.value)} style={{ marginLeft: 'auto' }}>
+          <option value="">전체 캐릭터</option>
+          {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+        </select>
+      )}
+      onDelete={async (ids) => { await deleteGambleLogs(ids); setLogs((prev) => prev.filter((g) => !ids.includes(g.id))); }}
+      renderRow={(g) => (
+        <>
+          <div className="log-line1">
+            <span className="log-name">{g.profiles?.character_name || '(탈퇴)'} <span className="log-id">{g.profiles?.login_id}</span></span>
+            {g.voided
+              ? <span className="log-tag gold">무효 처리</span>
+              : <span className={`log-delta ${g.result_delta >= 0 ? 'pos' : 'neg'}`}>{g.result_delta >= 0 ? '+' : ''}{g.result_delta}P</span>}
+          </div>
+          <div className="log-line2" style={g.voided ? { textDecoration: 'line-through' } : undefined}>베팅 {g.bet}P · {g.multiplier}배 · 잔액 {g.balance_after}P · {fmtDateTime(g.created_at)}</div>
+        </>
+      )}
+    />
   );
 }
 
