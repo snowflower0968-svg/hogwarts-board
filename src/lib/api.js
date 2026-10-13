@@ -27,7 +27,8 @@ const BOARD_HOUSE = Object.fromEntries(BOARDS.map((b) => [b.id, b.house]));
 
 const CHAT_TTL_MS = 60 * 60 * 1000;
 export const DEFAULT_POINT_SETTINGS = { postEvery: 1, postAmount: 5, commentEvery: 2, commentAmount: 1 };
-const GAMBLE_OUTCOMES = [[10, 1], [5, 4], [3, 8], [2, 15], [1, 22], [0.5, 10], [0.1, 5], [-1, 22], [-2, 15], [-3, 8], [-5, 4], [-10, 1]];
+// 기본 도박 확률 [배율, 비중]. 관리자가 settings/gamble 에서 바꿀 수 있음
+export const DEFAULT_GAMBLE_ODDS = [[1, 5], [2, 5], [3, 5], [5, 5], [10, 1], [-1, 3], [-2, 3], [-3, 3]];
 // 배율을 곱한 결과 (0.5배, 0.1배처럼 소수가 나와도 포인트는 정수로 반올림)
 export function gambleDelta(bet, multiplier) { return Math.round(bet * multiplier); }
 
@@ -461,9 +462,13 @@ export async function deleteChatRooms(ids) {
     await deleteChatRoomFully(id);
   }
 }
-async function touchRoom(roomId, text) {
-  try { await updateDoc(doc(db, 'chatRooms', roomId), { lastText: text.slice(0, 60), lastAt: serverTimestamp(), messageCount: increment(1) }); } catch (e) { /* best-effort */ }
+// 첫 메시지가 오가는 순간부터 CHAT_TTL_MS 동안만 대화 가능 (expiresAt 이 아직 없으면 이때 정해짐)
+async function touchRoom(roomId, text, room) {
+  const patch = { lastText: text.slice(0, 60), lastAt: serverTimestamp(), messageCount: increment(1) };
+  if (room && !room.expiresAt) patch.expiresAt = Timestamp.fromMillis(Date.now() + CHAT_TTL_MS);
+  try { await updateDoc(doc(db, 'chatRooms', roomId), patch); } catch (e) { /* best-effort */ }
 }
+function roomExpired(r) { return !!r.expiresAt && r.expiresAt.toMillis() <= Date.now(); }
 
 export async function fetchMyChats(id) {
   const [snapA, snapB] = await Promise.all([
@@ -475,7 +480,7 @@ export async function fetchMyChats(id) {
   const now = Date.now();
   const alive = [];
   for (const r of rooms) {
-    if (ts(r.expiresAt) <= now) continue; // 사용자에게는 안 보이지만 관리자는 기록을 볼 수 있음
+    if (r.expiresAt && ts(r.expiresAt) <= now) continue; // 사용자에게는 안 보이지만 관리자는 기록을 볼 수 있음
     alive.push(r);
   }
   return Promise.all(alive.map(async (r) => {
@@ -485,7 +490,7 @@ export async function fetchMyChats(id) {
     ]);
     return {
       id: r.id, post_id: r.postId, user_a: r.userA, user_b: r.userB,
-      created_at: ts(r.createdAt), expires_at: ts(r.expiresAt),
+      created_at: ts(r.createdAt), expires_at: r.expiresAt ? ts(r.expiresAt) : null,
       chat_messages: msgsSnap.docs.map((m) => ({ id: m.id, sender_id: m.data().senderId, created_at: ts(m.data().createdAt) })),
       chat_reads: readsSnap.docs.map((rd) => ({ user_id: rd.id, last_read_at: ts(rd.data().lastReadAt) })),
     };
@@ -493,16 +498,36 @@ export async function fetchMyChats(id) {
 }
 
 // ---------------- gambling ----------------
+function cleanOdds(list) {
+  const out = (Array.isArray(list) ? list : [])
+    .map((o) => [Number(o.multiplier ?? o[0]), Number(o.weight ?? o[1])])
+    .filter(([m, w]) => Number.isFinite(m) && m !== 0 && Number.isFinite(w) && w > 0);
+  return out.length ? out : DEFAULT_GAMBLE_ODDS;
+}
+export async function fetchGambleOdds() {
+  try {
+    const snap = await getDoc(doc(db, 'settings', 'gamble'));
+    if (snap.exists() && snap.data().odds) return cleanOdds(snap.data().odds);
+  } catch (e) { /* 기본값 사용 */ }
+  return DEFAULT_GAMBLE_ODDS;
+}
+export async function saveGambleOdds(list) {
+  const odds = cleanOdds(list).map(([multiplier, weight]) => ({ multiplier, weight }));
+  if (!odds.some((o) => o.multiplier > 0)) throw new Error('플러스 배율이 하나 이상 있어야 합니다.');
+  await setDoc(doc(db, 'settings', 'gamble'), { odds });
+  return odds.map((o) => [o.multiplier, o.weight]);
+}
 export async function spinGamble(bet) {
   const userRef = doc(db, 'users', uid());
   const snap = await getDoc(userRef);
   const pts = snap.data().points || 0;
   if (pts < 0) throw new Error('포인트가 부족하여 이용할 수 없습니다.');
   if (!bet || bet <= 0 || bet > pts) throw new Error('베팅 금액을 확인하세요.');
-  const total = GAMBLE_OUTCOMES.reduce((s, [, w]) => s + w, 0);
+  const odds = await fetchGambleOdds();
+  const total = odds.reduce((t, [, w]) => t + w, 0);
   let r = Math.random() * total;
-  let m = GAMBLE_OUTCOMES[GAMBLE_OUTCOMES.length - 1][0];
-  for (const [mult, w] of GAMBLE_OUTCOMES) { if (r < w) { m = mult; break; } r -= w; }
+  let m = odds[odds.length - 1][0];
+  for (const [mult, w] of odds) { if (r < w) { m = mult; break; } r -= w; }
   const delta = gambleDelta(bet, m);
   const newBal = pts - bet + delta;
   const logRef = doc(collection(db, 'gambleLogs'));
@@ -561,18 +586,17 @@ export async function fetchGambleCountByUser(id) {
 
 // ---------------- chat ----------------
 export async function openChatWith(postId, targetId) {
-  const now = Date.now();
   const existing = await getDocs(query(collection(db, 'chatRooms'), where('postId', '==', postId)));
   let roomId = null;
   existing.forEach((d) => {
     const r = d.data();
-    if (((r.userA === uid() && r.userB === targetId) || (r.userA === targetId && r.userB === uid())) && r.expiresAt.toMillis() > now) {
+    if (((r.userA === uid() && r.userB === targetId) || (r.userA === targetId && r.userB === uid())) && !roomExpired(r)) {
       roomId = d.id;
     }
   });
   if (!roomId) {
     const ref = await addDoc(collection(db, 'chatRooms'), {
-      postId, userA: uid(), userB: targetId, createdAt: serverTimestamp(), expiresAt: Timestamp.fromMillis(now + CHAT_TTL_MS),
+      postId, userA: uid(), userB: targetId, createdAt: serverTimestamp(), expiresAt: null,
     });
     roomId = ref.id;
   }
@@ -586,7 +610,7 @@ export async function fetchChatRoom(roomId) {
   const snap = await getDoc(doc(db, 'chatRooms', roomId));
   if (!snap.exists()) return null;
   const d = snap.data();
-  return { id: roomId, post_id: d.postId, user_a: d.userA, user_b: d.userB, created_at: ts(d.createdAt), expires_at: ts(d.expiresAt) };
+  return { id: roomId, post_id: d.postId, user_a: d.userA, user_b: d.userB, created_at: ts(d.createdAt), expires_at: d.expiresAt ? ts(d.expiresAt) : null };
 }
 export async function fetchChatMessages(roomId) {
   const q = query(collection(db, 'chatRooms', roomId, 'messages'), orderBy('createdAt'));
@@ -601,21 +625,28 @@ export async function fetchChatMessages(roomId) {
 export function subscribeChat(roomId, onChange) {
   return onSnapshot(collection(db, 'chatRooms', roomId, 'messages'), () => onChange());
 }
+export function subscribeChatReads(roomId, onChange) {
+  return onSnapshot(collection(db, 'chatRooms', roomId, 'reads'), (snap) => {
+    const map = {};
+    snap.docs.forEach((d) => { const t = d.data().lastReadAt; map[d.id] = t ? t.toMillis() : 0; });
+    onChange(map);
+  });
+}
 export async function sendChatMessage(roomId, text) {
   const roomSnap = await getDoc(doc(db, 'chatRooms', roomId));
   if (!roomSnap.exists()) throw new Error('채팅방을 찾을 수 없습니다.');
   const r = roomSnap.data();
-  if (r.expiresAt.toMillis() < Date.now()) throw new Error('대화 가능 시간이 종료되었습니다.');
+  if (roomExpired(r)) throw new Error('대화 가능 시간이 종료되었습니다.');
   await addDoc(collection(db, 'chatRooms', roomId, 'messages'), { senderId: uid(), type: 'text', text, createdAt: serverTimestamp() });
   const recipient = r.userA === uid() ? r.userB : r.userA;
   await addDoc(collection(db, 'notifications'), { userId: recipient, type: 'chat_message', roomId, preview: text.slice(0, 80), read: false, createdAt: serverTimestamp() });
-  await touchRoom(roomId, text);
+  await touchRoom(roomId, text, r);
 }
 export async function sendGift(roomId, amount) {
   const roomSnap = await getDoc(doc(db, 'chatRooms', roomId));
   if (!roomSnap.exists()) throw new Error('채팅방을 찾을 수 없습니다.');
   const r = roomSnap.data();
-  if (r.expiresAt.toMillis() < Date.now()) throw new Error('대화 가능 시간이 종료되었습니다.');
+  if (roomExpired(r)) throw new Error('대화 가능 시간이 종료되었습니다.');
   const userRef = doc(db, 'users', uid());
   const userSnap = await getDoc(userRef);
   const bal = userSnap.data().points || 0;
@@ -624,7 +655,7 @@ export async function sendGift(roomId, amount) {
   await updateDoc(userRef, { points: bal - amount });
   await addDoc(collection(db, 'chatRooms', roomId, 'messages'), { senderId: uid(), type: 'gift', kind: 'points', amount, status: 'pending', createdAt: serverTimestamp() });
   await addDoc(collection(db, 'notifications'), { userId: recipient, type: 'gift', points: amount, roomId, read: false, createdAt: serverTimestamp() });
-  await touchRoom(roomId, `[선물] 포인트 ${amount}`);
+  await touchRoom(roomId, `[선물] 포인트 ${amount}`, r);
 }
 export async function sendGiftItem(roomId, itemId, qtyRaw) {
   const qty = parseInt(qtyRaw, 10);
@@ -632,14 +663,14 @@ export async function sendGiftItem(roomId, itemId, qtyRaw) {
   const roomSnap = await getDoc(doc(db, 'chatRooms', roomId));
   if (!roomSnap.exists()) throw new Error('채팅방을 찾을 수 없습니다.');
   const r = roomSnap.data();
-  if (r.expiresAt.toMillis() < Date.now()) throw new Error('대화 가능 시간이 종료되었습니다.');
+  if (roomExpired(r)) throw new Error('대화 가능 시간이 종료되었습니다.');
   const recipient = r.userA === uid() ? r.userB : r.userA;
   const item = await removeItemFromUser(uid(), itemId, qty); // 보낸 순간 내 소지품에서 빠짐 (취소하면 돌아옴)
   await addDoc(collection(db, 'chatRooms', roomId, 'messages'), {
     senderId: uid(), type: 'gift', kind: 'item', itemName: item.name, itemDescription: item.description || '', qty, status: 'pending', createdAt: serverTimestamp(),
   });
   await addDoc(collection(db, 'notifications'), { userId: recipient, type: 'gift', itemName: item.name, qty, roomId, read: false, createdAt: serverTimestamp() });
-  await touchRoom(roomId, `[선물] ${item.name} x${qty}`);
+  await touchRoom(roomId, `[선물] ${item.name} x${qty}`, r);
 }
 export async function acceptGift(roomId, msgId) {
   const msgRef = doc(db, 'chatRooms', roomId, 'messages', msgId);
@@ -694,11 +725,18 @@ async function fetchProfilesFull(ids) {
 }
 export async function fetchAdminChatRooms() {
   const snap = await getDocs(query(collection(db, 'chatRooms'), orderBy('createdAt', 'desc'), limit(200)));
-  const rooms = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  let rooms = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  // 메시지가 한 번도 오가지 않은 방(눌러서 열기만 한 방)은 기록에 표시하지 않음
+  const checked = await Promise.all(rooms.map(async (r) => {
+    if (typeof r.messageCount === 'number') return r.messageCount > 0;
+    const m = await getDocs(query(collection(db, 'chatRooms', r.id, 'messages'), limit(1)));
+    return !m.empty;
+  }));
+  rooms = rooms.filter((_, i) => checked[i]);
   const profiles = await fetchProfilesFull(rooms.flatMap((r) => [r.userA, r.userB]));
   const titles = await titlesForPostIds(rooms.map((r) => r.postId).filter(Boolean));
   return rooms.map((r) => ({
-    id: r.id, user_a: r.userA, user_b: r.userB, created_at: ts(r.createdAt), expires_at: ts(r.expiresAt),
+    id: r.id, user_a: r.userA, user_b: r.userB, created_at: ts(r.createdAt), expires_at: r.expiresAt ? ts(r.expiresAt) : null,
     a: profiles[r.userA] || null, b: profiles[r.userB] || null,
     posts: r.postId ? { title: titles[r.postId] } : null,
     last_text: r.lastText || null, last_at: r.lastAt ? ts(r.lastAt) : null, message_count: r.messageCount ?? null,
@@ -751,6 +789,11 @@ export async function fetchCommentsByAuthor(id) {
 }
 
 // ---------------- admin ----------------
+// 게시판별 새 글 표시용: 최근 글의 게시판/작성자/시각만 가볍게 가져옴
+export async function fetchRecentPostStamps(n = 80) {
+  const snap = await getDocs(query(collection(db, 'posts'), orderBy('createdAt', 'desc'), limit(n)));
+  return snap.docs.map((d) => ({ board_id: d.data().boardId, author_id: d.data().authorId, created_at: d.data().createdAt ? d.data().createdAt.toMillis() : Date.now() }));
+}
 export async function fetchAllUsers() {
   const snap = await getDocs(query(collection(db, 'users'), orderBy('createdAt')));
   return snap.docs.map((d) => mapUser(d.id, d.data()));
@@ -823,6 +866,19 @@ export async function adminWithdrawUser(userId, deleteContent) {
     removed.comments = comments.length;
   }
   return removed;
+}
+// 탈퇴 처리된 회원을 목록에서 완전히 삭제 (회원 정보 문서와 소지품·개인 기재 삭제. 작성한 글/댓글은 그대로 남음)
+export async function adminDeleteWithdrawnUser(userId) {
+  const snap = await getDoc(doc(db, 'users', userId));
+  if (!snap.exists()) return;
+  if (!snap.data().withdrawn) throw new Error('탈퇴 처리된 회원만 삭제할 수 있습니다.');
+  for (const sub of ['items', 'notes']) {
+    // eslint-disable-next-line no-await-in-loop
+    const subSnap = await getDocs(collection(db, 'users', userId, sub));
+    // eslint-disable-next-line no-await-in-loop
+    await Promise.all(subSnap.docs.map((d) => deleteDoc(d.ref)));
+  }
+  await deleteDoc(doc(db, 'users', userId));
 }
 export async function adminRestoreUser(userId) {
   await updateDoc(doc(db, 'users', userId), { withdrawn: false, rejected: false, approved: true });

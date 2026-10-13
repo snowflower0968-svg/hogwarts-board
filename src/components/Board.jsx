@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { BOARDS } from '../lib/api';
-import { boardName, fmtTime } from '../lib/helpers';
+import { boardName, fmtTime, clip } from '../lib/helpers';
 
 function canPostToBoard(profile, boardId) {
   if (profile.is_admin) return true;
@@ -64,10 +64,10 @@ export default function Board({ profile, boardId, posts, openPost, onBulkDelete 
               <div className="title-line">
                 {selectMode && <input type="checkbox" className="row-check" checked={selected.has(p.id)} readOnly />}
                 {p.pinned && <span className="notice-badge">공지</span>}
-                <span className="p-title">{p.title}</span>
+                <span className="p-title">{clip(p.title, 40)}</span>
                 {p.comments?.length > 0 && <span className="c-count">[{p.comments.length}]</span>}
               </div>
-              <div className="p-preview">{p.content}</div>
+              <div className="p-preview">{clip(p.content, 80)}</div>
               <div className="p-meta">
                 <span>{fmtTime(p.created_at)}</span>
                 <span>좋아요 {p.post_likes?.length || 0}</span>

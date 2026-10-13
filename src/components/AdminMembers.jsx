@@ -278,6 +278,12 @@ function CharacterDetail({ userId, allUsers, actions, onBack, onWithdraw }) {
             <button className="a-btn accent" onClick={() => actions.restore(u)}>탈퇴 취소(복구)</button>
           </div>
         )}
+        {u.withdrawn && (
+          <div className="a-item">
+            <div className="a-item-main"><div className="a-item-title">목록에서 삭제</div><div className="a-item-sub">회원 정보를 완전히 지웁니다. (되돌릴 수 없음)</div></div>
+            <button className="a-btn danger" onClick={() => { actions.removeWithdrawn(u); onBack(); }}>삭제</button>
+          </div>
+        )}
       </AdminCard>
     </>
   );

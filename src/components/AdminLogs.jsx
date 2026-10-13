@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   fetchGambleLogsAdmin, deleteGambleLogs, fetchAdminChatRooms, fetchChatMessages, deleteChatRooms,
 } from '../lib/api';
-import { fmtDateTime } from '../lib/helpers';
+import { fmtDateTime, roomActive } from '../lib/helpers';
 
 // 관리자 기록 목록 공통 틀: 기록마다 삭제 버튼 + 여러 개 선택해서 삭제
 export function LogList({ items, renderRow, onDelete, emptyText, header }) {
@@ -105,7 +105,7 @@ function giftLabel(m) {
 function ChatDetail({ room, onBack, onDeleted }) {
   const [msgs, setMsgs] = useState(null);
   useEffect(() => { fetchChatMessages(room.id).then(setMsgs).catch(() => setMsgs([])); }, [room.id]);
-  const active = new Date(room.expires_at).getTime() > Date.now();
+  const active = roomActive(room);
   const nameA = room.a?.character_name || '(탈퇴)';
   const nameB = room.b?.character_name || '(탈퇴)';
 
@@ -125,7 +125,7 @@ function ChatDetail({ room, onBack, onDeleted }) {
           <span className={`status-pill ${active ? 'on' : ''}`}>{active ? '대화 가능' : '대화 종료'}</span>
           {' '}글: {room.posts?.title || '(삭제된 글)'}
         </div>
-        <div className="row-sub">시작 {fmtDateTime(room.created_at)} · 만료 {fmtDateTime(room.expires_at)}</div>
+        <div className="row-sub">시작 {fmtDateTime(room.created_at)}{room.expires_at ? ` · 만료 ${fmtDateTime(room.expires_at)}` : ''}</div>
         <div className="admin-row-form" style={{ marginTop: 8 }}>
           <button className="danger" onClick={remove}>이 채팅방 삭제</button>
         </div>
@@ -177,7 +177,7 @@ export function ChatAdmin() {
       emptyText="생성된 채팅방이 없습니다."
       onDelete={async (ids) => { await deleteChatRooms(ids); setRooms((prev) => prev.filter((r) => !ids.includes(r.id))); }}
       renderRow={(r) => {
-        const active = new Date(r.expires_at).getTime() > Date.now();
+        const active = roomActive(r);
         return (
           <div className="log-click" onClick={() => setDetail(r)}>
             <div className="log-line1">

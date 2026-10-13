@@ -4,7 +4,7 @@ import { MembersSection } from './AdminMembers';
 import { ContentSection } from './AdminContent';
 import { DigAdmin, DigLogsAdmin, ItemLogsAdmin } from './AdminDig';
 import { GambleAdmin, ChatAdmin } from './AdminLogs';
-import { PointSettingsCard, GalleonRateCard, ShopAdmin } from './AdminShop';
+import { PointSettingsCard, GalleonRateCard, GambleOddsCard, ShopAdmin } from './AdminShop';
 
 // 관리자 화면: 위쪽 5개 구역 + 구역 안의 작은 탭
 export default function Admin({ pendingUsers, allUsers, allPosts, allComments, refresh, actions, error }) {
@@ -51,6 +51,7 @@ export default function Admin({ pendingUsers, allUsers, allPosts, allComments, r
         <>
           <PointSettingsCard />
           <GalleonRateCard />
+          <GambleOddsCard />
         </>
       )}
     </>

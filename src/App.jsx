@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
 import * as api from './lib/api';
-import { playNotifSound, notifText, makeThumb } from './lib/helpers';
+import { playNotifSound, notifText, makeThumb, roomActive } from './lib/helpers';
 
 import { LoginScreen, SignupScreen, SignupDoneScreen } from './components/Auth';
 import { Header, NotifPanel, Sidebar } from './components/Shell';
@@ -39,6 +39,54 @@ export default function App() {
   const [adminData, setAdminData] = useState({ pendingUsers: [], allUsers: [], allPosts: [], allComments: [] });
 
   const [chatRoom, setChatRoom] = useState(null);
+  const [chatReads, setChatReads] = useState({});
+
+  // ---------------- 새 글 빨간 점 (내가 마지막으로 그 게시판을 본 이후 다른 사람의 새 글) ----------------
+  const [recentStamps, setRecentStamps] = useState([]);
+  const [, setSeenTick] = useState(0);
+  const seenKey = (boardId) => `hb:seen:${profile?.id}:${boardId}`;
+  function getSeen(boardId) { try { return Number(localStorage.getItem(seenKey(boardId))) || 0; } catch (e) { return 0; } }
+  function markSeen(boardId) { try { localStorage.setItem(seenKey(boardId), String(Date.now())); } catch (e) { /* 저장 불가 */ } setSeenTick((n) => n + 1); }
+  useEffect(() => {
+    if (!profile) return undefined;
+    let live = true;
+    const load = () => api.fetchRecentPostStamps().then((r) => { if (live) setRecentStamps(r); }).catch(() => {});
+    load();
+    const t = setInterval(load, 60000);
+    return () => { live = false; clearInterval(t); };
+  }, [profile?.id]);
+  const boardDots = {};
+  if (profile) {
+    recentStamps.forEach((r) => {
+      if (r.author_id === profile.id || !canViewBoard(profile, r.board_id)) return;
+      let seen = getSeen(r.board_id);
+      if (!seen) { markSeenInit(r.board_id); seen = Date.now(); }
+      if (r.created_at > seen) boardDots[r.board_id] = true;
+    });
+  }
+  function markSeenInit(boardId) { try { localStorage.setItem(seenKey(boardId), String(Date.now())); } catch (e) { /* 저장 불가 */ } }
+  useEffect(() => { if (profile && view === 'board') markSeen(currentBoard); }, [profile?.id, view, currentBoard, recentStamps]); // eslint-disable-line react-hooks/exhaustive-deps
+  const chatFromRef = useRef(null);
+
+  // ---------------- 스크롤 위치 기억 (뒤로 가면 보던 자리로 복원) ----------------
+  const scrollMemo = useRef(new Map());
+  const scrollKeyRef = useRef(null);
+  const restoringRef = useRef(false);
+  const viewKey = view === 'post' ? `post:${currentPostId}` : view === 'chat' ? `chat:${currentChatId}` : view === 'board' ? `board:${currentBoard}` : view;
+  useLayoutEffect(() => {
+    scrollKeyRef.current = viewKey;
+    const target = scrollMemo.current.get(viewKey) || 0;
+    restoringRef.current = true;
+    window.scrollTo(0, target);
+    const timers = [60, 200, 500, 1000].map((ms) => setTimeout(() => { if (scrollKeyRef.current === viewKey) window.scrollTo(0, target); }, ms));
+    const done = setTimeout(() => { restoringRef.current = false; }, 1100);
+    return () => { timers.forEach(clearTimeout); clearTimeout(done); };
+  }, [viewKey]);
+  useEffect(() => {
+    function onScroll() { if (!restoringRef.current && scrollKeyRef.current) scrollMemo.current.set(scrollKeyRef.current, window.scrollY); }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
   const [chatMessages, setChatMessages] = useState([]);
 
   const [notifications, setNotifications] = useState([]);
@@ -165,7 +213,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile?.id, view, currentPostId]);
 
-  function openPost(id) { setCurrentPostId(id); setView('post'); }
+  function openPost(id) { scrollMemo.current.delete(`post:${id}`); setCurrentPostId(id); setView('post'); }
 
   // ---------------- my page ----------------
   const [myPageError, setMyPageError] = useState('');
@@ -210,7 +258,7 @@ export default function App() {
   // ---------------- chat ----------------
   const loadChat = useCallback(async (roomId) => {
     const [room, msgs] = await Promise.all([api.fetchChatRoom(roomId), api.fetchChatMessages(roomId)]);
-    if (room && new Date(room.expires_at).getTime() <= Date.now()) {
+    if (room && !roomActive(room)) {
       setChatRoom(null); setChatMessages([]);
       return;
     }
@@ -221,7 +269,8 @@ export default function App() {
     if (!profile || view !== 'chat' || !currentChatId) return;
     loadChat(currentChatId);
     const unsub = api.subscribeChat(currentChatId, () => loadChat(currentChatId));
-    return unsub;
+    const unsubReads = api.subscribeChatReads(currentChatId, setChatReads);
+    return () => { unsub(); unsubReads(); setChatReads({}); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile?.id, view, currentChatId]);
 
@@ -231,7 +280,18 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [giftRoomId]);
 
-  function openChatRoomById(id) { setCurrentChatId(id); setView('chat'); }
+  const otherId = chatRoom && profile ? (chatRoom.user_a === profile.id ? chatRoom.user_b : chatRoom.user_a) : null;
+  const otherReadAt = otherId ? (chatReads[otherId] || 0) : 0;
+  function openChatRoomById(id) {
+    scrollMemo.current.delete(`chat:${id}`);
+    chatFromRef.current = view === 'chat' ? chatFromRef.current : view;
+    setCurrentChatId(id); setView('chat');
+  }
+  function leaveChat() {
+    const from = chatFromRef.current || 'mypage';
+    setCurrentChatId(null);
+    setView(from === 'post' && !currentPostId ? 'board' : from);
+  }
   async function openChatWith(postId, targetId) {
     const roomId = await api.openChatWith(postId, targetId);
     openChatRoomById(roomId);
@@ -294,13 +354,13 @@ export default function App() {
     <>
       <Header profile={profile} view={view} setView={setView} unreadCount={unreadCount}
         notifOpen={notifOpen} setNotifOpen={toggleNotifPanel} onLogout={() => askConfirm('로그아웃', handleLogout, false)}
-        onMobileMenu={() => setMobileNavOpen((v) => !v)} />
+        onMobileMenu={() => setMobileNavOpen((v) => !v)} menuDot={Object.keys(boardDots).length > 0} />
       <div className="layout">
         <Sidebar profile={profile} view={view} currentBoard={currentBoard}
-          selectBoard={(id) => { setCurrentBoard(id); setView('board'); }}
+          selectBoard={(id) => { scrollMemo.current.delete(`board:${id}`); setCurrentBoard(id); setView('board'); }}
           openMyPage={() => setView('mypage')} openPersonal={() => setView('personal')} openGamble={() => setView('gamble')} openDig={() => setView('dig')} openShop={() => setView('shop')}
           openSettings={() => setView('settings')} openAdmin={() => setView('admin')}
-          hasChatUnread={hasChatUnread} mobileOpen={mobileNavOpen} closeMobile={() => setMobileNavOpen(false)} />
+          hasChatUnread={hasChatUnread} boardDots={boardDots} mobileOpen={mobileNavOpen} closeMobile={() => setMobileNavOpen(false)} />
         <div className={`sidebar-backdrop ${mobileNavOpen ? 'show' : ''}`} onClick={() => setMobileNavOpen(false)} />
         <div className="main"><div className="main-inner">
 
@@ -367,7 +427,7 @@ export default function App() {
 
           {view === 'chat' && (
             <Chat profile={profile} room={chatRoom} messages={chatMessages}
-              onBack={() => { setView('mypage'); setCurrentChatId(null); }}
+              onBack={leaveChat} otherReadAt={otherReadAt}
               onSend={async (text) => { await api.sendChatMessage(chatRoom.id, text); loadChat(chatRoom.id); }}
               onOpenGift={() => setGiftRoomId(chatRoom.id)}
               onAccept={async (msgId) => { await api.acceptGift(chatRoom.id, msgId); const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh); loadChat(chatRoom.id); }}
@@ -394,6 +454,7 @@ export default function App() {
                   await loadAdmin();
                   window.alert(`강제 탈퇴 처리했습니다.${deleteContent ? ` (글 ${r.posts}개, 댓글 ${r.comments}개 삭제)` : ''}`);
                 },
+                removeWithdrawn: (u) => askConfirm(`${u.character_name} 계정을 목록에서 완전히 삭제할까?\n(소지품 등 회원 정보가 지워지며 되돌릴 수 없어. 작성한 글/댓글은 남아.)`, async () => { await api.adminDeleteWithdrawnUser(u.id); loadAdmin(); }),
                 restore: (u) => askConfirm(`${u.character_name} 계정을 복구할까?`, async () => { await api.adminRestoreUser(u.id); loadAdmin(); }, false),
                 openPost,
                 togglePinned: async (id) => { await api.togglePinned(id); loadAdmin(); },

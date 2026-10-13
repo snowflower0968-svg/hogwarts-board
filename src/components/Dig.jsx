@@ -69,7 +69,7 @@ export default function Dig({ profile, onDug }) {
       {pub === null && <div className="empty-state">아직 간이 조사가 열리지 않았습니다.</div>}
       {pub && (
         <>
-          <div className="dig-meta">{pub.round || 1}번째 판 · 남은 칸 {pub.cells.filter((c) => !c.dug).length}/{pub.cells.length}</div>
+          <div className="dig-meta">남은 칸 {pub.cells.filter((c) => !c.dug).length}/{pub.cells.length}</div>
           <div className="dig-grid">
             {pub.cells.map((c, i) => (
               <button

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
-  fetchPointSettings, savePointSettings, fetchGalleonRate, saveGalleonRate, subscribeShop, saveShopItem, deleteShopItem,
+  fetchPointSettings, savePointSettings, fetchGalleonRate, saveGalleonRate, fetchGambleOdds, saveGambleOdds, subscribeShop, saveShopItem, deleteShopItem,
   setShopDiscount, clearShopDiscount, discountActive, effectivePrice,
 } from '../lib/api';
 import { fmtRemain } from '../lib/helpers';
@@ -57,6 +57,53 @@ export function GalleonRateCard() {
         <span className="a-inline-note" style={{ flex: 'none', minWidth: 0 }}>갈레온 1개 =</span>
         <div className="price-input"><input className="txt-input" type="number" min="1" value={rate} onChange={(e) => setRate(e.target.value)} style={{ width: 90 }} /><span>포인트</span></div>
         <button className="a-btn accent big" disabled={rate === saved} onClick={save}>저장</button>
+      </div>
+      {err && <div className="auth-error" style={{ marginBottom: 0 }}>{err}</div>}
+      {ok && <div className="auth-success" style={{ marginBottom: 0 }}>{ok}</div>}
+    </AdminCard>
+  );
+}
+
+// ---------------- 도박 확률 ----------------
+export function GambleOddsCard() {
+  const [rows, setRows] = useState(null);
+  const [saved, setSaved] = useState('');
+  const [err, setErr] = useState('');
+  const [ok, setOk] = useState('');
+  useEffect(() => {
+    fetchGambleOdds().then((o) => {
+      const r = o.map(([m, w]) => ({ m: String(m), w: String(w) }));
+      setRows(r); setSaved(JSON.stringify(r));
+    });
+  }, []);
+  if (!rows) return null;
+  const valid = rows.filter((r) => Number(r.m) !== 0 && Number.isFinite(Number(r.m)) && Number(r.w) > 0);
+  const total = valid.reduce((t, r) => t + Number(r.w), 0);
+  const change = (i, k) => (e) => setRows(rows.map((r, j) => (j === i ? { ...r, [k]: e.target.value } : r)));
+  async function save() {
+    setErr(''); setOk('');
+    try {
+      const out = await saveGambleOdds(valid.map((r) => [Number(r.m), Number(r.w)]));
+      const r = out.map(([m, w]) => ({ m: String(m), w: String(w) }));
+      setRows(r); setSaved(JSON.stringify(r)); setOk('저장했습니다. 다음 도박부터 적용됩니다.');
+    } catch (e) { setErr(e.message); }
+  }
+  return (
+    <AdminCard title="도박 확률" hint="배율과 비중을 정해요. 비중이 클수록 자주 나오고, 아래 확률은 비중의 합으로 자동 계산돼요. 배율이 음수면 베팅액보다 더 잃어요.">
+      {rows.map((r, i) => {
+        const pct = total > 0 && valid.includes(r) ? (Number(r.w) / total) * 100 : 0;
+        return (
+          <div key={i} className="a-form-row">
+            <div className="price-input"><input className="txt-input" type="number" step="any" value={r.m} onChange={change(i, 'm')} style={{ width: 70 }} aria-label="배율" /><span>배</span></div>
+            <div className="price-input"><span>비중</span><input className="txt-input" type="number" min="0" step="any" value={r.w} onChange={change(i, 'w')} style={{ width: 70 }} aria-label="비중" /></div>
+            <span className="a-inline-note" style={{ flex: 'none', minWidth: 48 }}>{pct.toFixed(1)}%</span>
+            <button className="a-btn" onClick={() => setRows(rows.filter((_, j) => j !== i))}>삭제</button>
+          </div>
+        );
+      })}
+      <div className="a-form-row">
+        <button className="a-btn" onClick={() => setRows([...rows, { m: '', w: '1' }])}>배율 추가</button>
+        <button className="a-btn accent big" disabled={JSON.stringify(rows) === saved} onClick={save}>저장</button>
       </div>
       {err && <div className="auth-error" style={{ marginBottom: 0 }}>{err}</div>}
       {ok && <div className="auth-success" style={{ marginBottom: 0 }}>{ok}</div>}

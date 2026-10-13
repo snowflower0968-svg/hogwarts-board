@@ -18,10 +18,10 @@ const MENU_SVG = (
   </svg>
 );
 
-export function Header({ profile, view, setView, unreadCount, notifOpen, setNotifOpen, onLogout, onMobileMenu }) {
+export function Header({ profile, view, setView, unreadCount, notifOpen, setNotifOpen, onLogout, onMobileMenu, menuDot }) {
   return (
     <div className="header">
-      <button className="mobile-menu-btn" onClick={onMobileMenu} aria-label="메뉴">{MENU_SVG}</button>
+      <button className="mobile-menu-btn" onClick={onMobileMenu} aria-label="메뉴">{MENU_SVG}{menuDot && <span className="dot-badge menu-dot" />}</button>
       <div className="logo" onClick={() => setView('board')}>호그와트 익명 게시판</div>
       <div className="header-spacer" />
       <div className="header-right">
@@ -67,13 +67,13 @@ export function NotifPanel({ notifications, onOpen, onClose, onReadAll }) {
   );
 }
 
-export function Sidebar({ profile, view, currentBoard, selectBoard, openMyPage, openPersonal, openGamble, openDig, openShop, openSettings, openAdmin, hasChatUnread, mobileOpen, closeMobile }) {
+export function Sidebar({ profile, view, currentBoard, selectBoard, openMyPage, openPersonal, openGamble, openDig, openShop, openSettings, openAdmin, hasChatUnread, boardDots = {}, mobileOpen, closeMobile }) {
   const mainBoards = BOARDS.filter((b) => b.id !== 'anon' && canViewBoard(profile, b.id));
   const anonBoard = BOARDS.find((b) => b.id === 'anon');
   const renderBoard = (b) => {
     return (
       <div key={b.id} className={`sidebar-item ${view === 'board' && currentBoard === b.id ? 'active' : ''}`} onClick={() => { selectBoard(b.id); closeMobile(); }}>
-        {b.name}
+        {b.name}{boardDots[b.id] && <span className="dot-badge" />}
       </div>
     );
   };

@@ -137,3 +137,14 @@ export function fmtRemain(ms) {
   if (m > 0) return `${m}분 ${sec}초`;
   return `${sec}초`;
 }
+
+// 채팅방 대화 가능 여부: 첫 메시지 전(expires_at 없음)이면 가능, 이후엔 만료 시각 전까지 가능
+export function roomActive(room) {
+  return !room.expires_at || new Date(room.expires_at).getTime() > Date.now();
+}
+
+// 긴 글은 n글자까지만 보여주고 뒤는 ...으로 줄임 (줄바꿈은 공백으로)
+export function clip(text, n = 80) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  return t.length > n ? t.slice(0, n) + '...' : t;
+}

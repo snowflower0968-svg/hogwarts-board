@@ -1,11 +1,11 @@
 import React, { useRef, useState } from 'react';
-import { fmtTime } from '../lib/helpers';
+import { fmtTime, roomActive } from '../lib/helpers';
 
-export default function Chat({ profile, room, messages, onBack, onSend, onOpenGift, onAccept, onCancel }) {
+export default function Chat({ profile, room, messages, onBack, onSend, onOpenGift, onAccept, onCancel, otherReadAt = 0 }) {
   const [text, setText] = useState('');
   const taRef = useRef(null);
   if (!room) return <div className="empty-state">채팅방이 만료되어 삭제되었습니다.</div>;
-  const active = new Date(room.expires_at).getTime() > Date.now();
+  const active = roomActive(room);
 
   function autoGrow(el) {
     if (!el) return;
@@ -47,7 +47,7 @@ export default function Chat({ profile, room, messages, onBack, onSend, onOpenGi
           }
           return (
             <div key={m.id} className={`chat-msg ${mine ? 'mine' : 'theirs'}${m.type === 'gift' ? ' gift' : ''}`}>
-              <div className="chat-sender">{mine ? '나' : '상대방'} · {fmtTime(m.created_at)}</div>
+              <div className="chat-sender">{mine ? '나' : '상대방'} · {fmtTime(m.created_at)}{mine && <span className={`read-mark${m.created_at <= otherReadAt ? ' read' : ''}`}>{m.created_at <= otherReadAt ? '읽음' : '안 읽음'}</span>}</div>
               <div className="chat-bubble">{body}</div>
             </div>
           );

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { boardName, fmtTime, houseName } from '../lib/helpers';
+import { boardName, fmtTime, houseName, roomActive } from '../lib/helpers';
 import { canViewBoard } from './Board';
 
 function roomUnread(room, uid) {
@@ -82,7 +82,7 @@ export default function MyPage({ profile, posts, comments, chats, openPost, onEd
 
       {tab === 'chats' && (
         chats.length === 0 ? <div className="empty-state">채팅 내역이 없습니다.</div> : chats.map((r) => {
-          const active = new Date(r.expires_at).getTime() > Date.now();
+          const active = roomActive(r);
           const un = roomUnread(r, profile.id);
           return (
             <div key={r.id} className="list-row">
