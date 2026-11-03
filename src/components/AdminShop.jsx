@@ -193,7 +193,7 @@ export function YachaTimeoutCard() {
     catch (e) { setErr(e.message); }
   }
   return (
-    <AdminCard title="야차 이탈 제한시간" hint="상대가 이 시간 동안 응답하지 않으면 기권 처리돼요. (신청 대기, 베팅 확정, 히트/스탠드, 다음 라운드 동의 모두 동일하게 적용)">
+    <AdminCard title="야차 이탈 제한시간" hint="상대가 이 시간 동안 응답하지 않으면 기권 처리돼요. (신청 대기, 베팅 확정, 가위바위보 선택, 다음 라운드 동의 모두 동일하게 적용)">
       <div className="a-form-row">
         <input className="txt-input" type="number" min="1" value={v} onChange={(e) => setV(e.target.value)} style={{ width: 100 }} /><span className="a-inline-note">분</span>
         <button className="a-btn accent big" disabled={v === saved} onClick={save}>저장</button>
@@ -209,7 +209,7 @@ const KIND_HINT = {
   item: '구매하면 소지품으로 들어가요.',
   dig_ticket: '구매하면 조사 횟수가 늘어나요. (최대 3회 충전과 별개, 구매 제한 없음)',
   gamble_void: '도박 직후에 1회 결과를 없던 일로 되돌립니다. 1회 1장만 보유 가능하며 사용 후 재구매가 가능합니다.',
-  yacha_ticket: '채팅에서 야차(타로 카드 게임)를 신청·수락할 때 1장씩 소모돼요. 구매 제한 없음.',
+  yacha_ticket: '채팅에서 야차(가위바위보 게임)를 신청·수락할 때 1장씩 소모돼요. 둘 중 한쪽만 보유해도 진행 가능. 구매 제한 없음.',
 };
 const KIND_LABEL = { item: '일반 상품', dig_ticket: '간이조사권', gamble_void: '도박 무효권', yacha_ticket: '야차권' };
 const KIND_TAG = { dig_ticket: '조사권', gamble_void: '무효권', yacha_ticket: '야차권' };

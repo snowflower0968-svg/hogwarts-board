@@ -34,7 +34,10 @@ export default function Chat({ profile, room, messages, onBack, onSend, onOpenGi
           const mine = m.sender_id === profile.id;
           let body;
           if (m.type === 'gift') {
-            const label = m.kind === 'item' ? `소지품 ${m.item_name} x${m.qty}` : `포인트 ${m.amount}`;
+            const ticketLabel = { yacha: '야차권', dig: '간이조사권' }[m.ticket_type] || '티켓';
+            const label = m.kind === 'item' ? `소지품 ${m.item_name} x${m.qty}`
+              : m.kind === 'ticket' ? `${ticketLabel} x${m.qty}`
+                : `포인트 ${m.amount}`;
             if (m.status === 'pending') {
               body = mine
                 ? <>{label} 선물 대기중<div><button className="text-btn" onClick={() => onCancel(m.id)}>취소</button></div></>

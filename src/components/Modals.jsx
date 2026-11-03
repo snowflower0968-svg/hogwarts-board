@@ -130,11 +130,12 @@ export function ConfirmModal({ message, danger = true, onCancel, onConfirm, canc
   );
 }
 
-export function GiftModal({ balance, items = [], onCancel, onSendPoints, onSendItem }) {
+export function GiftModal({ balance, items = [], yachaTicket = 0, digTicket = 0, onCancel, onSendPoints, onSendItem, onSendTicket }) {
   const [mode, setMode] = useState('points');
   const [amount, setAmount] = useState('');
   const [itemId, setItemId] = useState('');
   const [qty, setQty] = useState('1');
+  const [ticketQty, setTicketQty] = useState('1');
   const [error, setError] = useState('');
   const selected = items.find((i) => i.id === itemId);
   const { overlayClick, guard } = useCloseGuard(!!amount || !!itemId, onCancel);
@@ -146,11 +147,16 @@ export function GiftModal({ balance, items = [], onCancel, onSendPoints, onSendI
         const amt = parseInt(amount, 10);
         if (!amt || amt <= 0) { setError('보낼 포인트를 입력하세요.'); return; }
         await onSendPoints(amt);
-      } else {
+      } else if (mode === 'item') {
         const q = parseInt(qty, 10);
         if (!selected) { setError('보낼 소지품을 선택하세요.'); return; }
         if (!q || q <= 0 || q > selected.qty) { setError('수량을 확인하세요.'); return; }
         await onSendItem(selected.id, q);
+      } else {
+        const q = parseInt(ticketQty, 10);
+        const have = mode === 'yacha' ? yachaTicket : digTicket;
+        if (!q || q <= 0 || q > have) { setError('수량을 확인하세요.'); return; }
+        await onSendTicket(mode, q);
       }
     } catch (err) { setError(err.message || '오류가 발생했습니다.'); }
   }
@@ -163,21 +169,28 @@ export function GiftModal({ balance, items = [], onCancel, onSendPoints, onSendI
         <div className="seg-row">
           <button type="button" className={mode === 'points' ? 'on' : ''} onClick={() => { setMode('points'); setError(''); }}>포인트</button>
           <button type="button" className={mode === 'item' ? 'on' : ''} onClick={() => { setMode('item'); setError(''); }}>소지품</button>
+          <button type="button" className={mode === 'yacha' ? 'on' : ''} onClick={() => { setMode('yacha'); setTicketQty('1'); setError(''); }}>야차권</button>
+          <button type="button" className={mode === 'dig' ? 'on' : ''} onClick={() => { setMode('dig'); setTicketQty('1'); setError(''); }}>조사권</button>
         </div>
         {error && <div className="auth-error">{error}</div>}
         <form onSubmit={submit}>
           {mode === 'points' ? (
             <input type="number" min="1" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={`보유 ${balance}P`} />
-          ) : items.length === 0 ? (
-            <div className="empty-state" style={{ padding: '20px 0' }}>보유한 소지품이 없습니다.</div>
+          ) : mode === 'item' ? (
+            items.length === 0 ? (
+              <div className="empty-state" style={{ padding: '20px 0' }}>보유한 소지품이 없습니다.</div>
+            ) : (
+              <>
+                <select value={itemId} onChange={(e) => { setItemId(e.target.value); setQty('1'); }}>
+                  <option value="">소지품 선택</option>
+                  {items.map((i) => <option key={i.id} value={i.id}>{i.name} (보유 {i.qty})</option>)}
+                </select>
+                <input type="number" min="1" max={selected ? selected.qty : undefined} value={qty} onChange={(e) => setQty(e.target.value)} placeholder="수량" />
+              </>
+            )
           ) : (
-            <>
-              <select value={itemId} onChange={(e) => { setItemId(e.target.value); setQty('1'); }}>
-                <option value="">소지품 선택</option>
-                {items.map((i) => <option key={i.id} value={i.id}>{i.name} (보유 {i.qty})</option>)}
-              </select>
-              <input type="number" min="1" max={selected ? selected.qty : undefined} value={qty} onChange={(e) => setQty(e.target.value)} placeholder="수량" />
-            </>
+            <input type="number" min="1" max={mode === 'yacha' ? yachaTicket : digTicket} value={ticketQty} onChange={(e) => setTicketQty(e.target.value)}
+              placeholder={`보유 ${mode === 'yacha' ? yachaTicket : digTicket}장`} />
           )}
           <div className="modal-actions">
             <button type="button" className="modal-cancel" onClick={onCancel}>취소</button>

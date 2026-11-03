@@ -1,22 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import {
-  tarotCard, acceptYacha, declineYacha, setYachaBet, confirmYachaBet,
-  hitYacha, standYacha, resolveYachaDeath, agreeYachaNextRound, declineYachaNextRound,
+  rpsLabel, acceptYacha, declineYacha, setYachaBet, confirmYachaBet,
+  chooseYacha, agreeYachaNextRound, declineYachaNextRound,
   checkYachaTimeout, fetchItemsOf,
 } from '../lib/api';
 
-function Card({ id, destroyed, back, faceDown }) {
-  if (back || faceDown) return <div className={`tarot-card back ${destroyed ? 'destroyed' : ''}`}>🂠</div>;
-  const c = tarotCard(id);
-  return (
-    <div className={`tarot-card ${destroyed ? 'destroyed' : ''}`}>
-      <div className="tarot-roman">{c.roman}</div>
-      <div className="tarot-name">{c.name}</div>
-    </div>
-  );
-}
+const RPS_CHOICES = [
+  { id: 'rock', label: '바위' },
+  { id: 'scissors', label: '가위' },
+  { id: 'paper', label: '보' },
+];
 
-function BetEditor({ myBet, items, onChange, onConfirm, confirmed, disabled }) {
+function BetEditor({ myBet, items, lastBet, round, onChange, onConfirm, confirmed, disabled, err }) {
   const [points, setPoints] = useState(String(myBet?.points || ''));
   const [picked, setPicked] = useState(myBet?.items || []);
   const [pickId, setPickId] = useState('');
@@ -32,18 +27,19 @@ function BetEditor({ myBet, items, onChange, onConfirm, confirmed, disabled }) {
   function removeItem(id) { const next = picked.filter((p) => p.id !== id); setPicked(next); onChange(points, next); }
   return (
     <div className="yacha-bet-editor">
-      <div className="a-form-row">
+      {round > 1 && <div className="yacha-note">직전 라운드({lastBet || 0}P)보다 더 걸어야 해요.</div>}
+      <div className="yacha-field-row">
+        <label>걸 포인트</label>
         <input className="txt-input" type="number" min="0" value={points} disabled={confirmed || disabled}
-          onChange={(e) => { setPoints(e.target.value); onChange(e.target.value, picked); }} placeholder="걸 포인트" />
-        <span>P</span>
+          onChange={(e) => { setPoints(e.target.value); onChange(e.target.value, picked); }} placeholder="0" />
       </div>
       {!confirmed && !disabled && items.length > 0 && (
-        <div className="a-form-row">
+        <div className="yacha-field-row">
           <select value={pickId} onChange={(e) => setPickId(e.target.value)}>
             <option value="">소지품 추가</option>
             {items.map((i) => <option key={i.id} value={i.id}>{i.name} (보유 {i.qty})</option>)}
           </select>
-          <input className="txt-input" type="number" min="1" value={pickQty} onChange={(e) => setPickQty(e.target.value)} style={{ width: 60 }} />
+          <input className="txt-input" type="number" min="1" value={pickQty} onChange={(e) => setPickQty(e.target.value)} style={{ width: 56 }} />
           <button type="button" className="a-btn" onClick={addItem}>추가</button>
         </div>
       )}
@@ -54,8 +50,9 @@ function BetEditor({ myBet, items, onChange, onConfirm, confirmed, disabled }) {
           ))}
         </div>
       )}
-      {!confirmed && !disabled && <button className="a-btn accent big" style={{ width: '100%', marginTop: 8 }} onClick={onConfirm}>베팅 확정</button>}
-      {confirmed && <div className="yacha-confirmed-note">확정됨 — 상대를 기다리는 중</div>}
+      {err && <div className="auth-error" style={{ marginTop: 6 }}>{err}</div>}
+      {!confirmed && !disabled && <button className="a-btn accent big" style={{ width: '100%', marginTop: 10 }} onClick={onConfirm}>베팅 확정</button>}
+      {confirmed && <div className="yacha-note ok">확정됨 — 상대를 기다리는 중</div>}
     </div>
   );
 }
@@ -72,7 +69,7 @@ export default function YachaGame({ profile, room, game, onRefresh }) {
   }, [game?.status, game?.id, me]);
 
   useEffect(() => {
-    if (!game || !['pending', 'betting', 'playing', 'result'].includes(game.status)) return undefined;
+    if (!game || !['pending', 'betting', 'choosing', 'result'].includes(game.status)) return undefined;
     const t = setInterval(() => { checkYachaTimeout(game.id).then((acted) => { if (acted) onRefresh(); }).catch(() => {}); }, 15000);
     return () => clearInterval(t);
   }, [game, onRefresh]);
@@ -97,12 +94,12 @@ export default function YachaGame({ profile, room, game, onRefresh }) {
         {err && <div className="auth-error">{err}</div>}
         {iRequested ? (
           <>
-            <div className="yacha-sub">상대의 수락을 기다리는 중입니다.</div>
+            <div className="yacha-note">상대의 수락을 기다리는 중입니다.</div>
             <button className="a-btn" disabled={busy} onClick={() => run(() => declineYacha(game.id))}>신청 취소</button>
           </>
         ) : (
           <>
-            <div className="yacha-sub">상대가 야차를 신청했습니다. 야차권이 있어야 수락할 수 있어요.</div>
+            <div className="yacha-note">상대가 야차(가위바위보)를 신청했습니다.</div>
             <div className="modal-actions">
               <button className="modal-cancel" disabled={busy} onClick={() => run(() => declineYacha(game.id))}>거절</button>
               <button className="modal-confirm" disabled={busy} onClick={() => run(() => acceptYacha(game.id))}>수락</button>
@@ -124,8 +121,9 @@ export default function YachaGame({ profile, room, game, onRefresh }) {
           <div>
             <div className="yacha-col-label">내 베팅</div>
             <BetEditor myBet={myBet} items={items} confirmed={!!myBet?.confirmed} disabled={busy}
+              round={game.round} lastBet={game.last_bet?.[me]}
               onChange={(p, its) => setYachaBet(game.id, p, its).catch((e) => setErr(e.message))}
-              onConfirm={() => run(() => confirmYachaBet(game.id))} />
+              onConfirm={() => run(() => confirmYachaBet(game.id))} err={null} />
           </div>
           <div>
             <div className="yacha-col-label">상대 베팅</div>
@@ -133,59 +131,35 @@ export default function YachaGame({ profile, room, game, onRefresh }) {
               <div className="yacha-opp-bet">
                 {oppBet.points > 0 && <div>{oppBet.points}P</div>}
                 {(oppBet.items || []).map((it) => <div key={it.id}>{it.name} x{it.qty}</div>)}
-                <div className="yacha-confirmed-note">{oppBet.confirmed ? '확정됨' : '입력 중'}</div>
+                <div className="yacha-note ok">{oppBet.confirmed ? '확정됨' : '입력 중'}</div>
               </div>
-            ) : <div className="yacha-sub">아직 입력하지 않았습니다.</div>}
+            ) : <div className="yacha-note">아직 입력하지 않았습니다.</div>}
           </div>
         </div>
       </div>
     );
   }
 
-  if (game.status === 'playing') {
-    const myHand = game.hands[me]; const oppHand = game.hands[other];
-    const myTurn = game.turn === me;
-    const pending = game.pending_effect;
-    const iCanSeeOppDown = (myHand.peeked || []).includes(other);
+  if (game.status === 'choosing') {
+    const picked = !!game.choices[me];
+    const oppPicked = !!game.choices[other];
     return (
-      <div className="yacha-panel yacha-table">
+      <div className="yacha-panel">
         <div className="yacha-title">야차 · {game.round}라운드</div>
         {err && <div className="auth-error">{err}</div>}
-        <div className="yacha-side opp">
-          <div className="yacha-col-label">상대</div>
-          <div className="yacha-cards">
-            {oppHand.up.map((c, i) => <Card key={i} id={c.id} destroyed={c.destroyed} />)}
-            <Card id={oppHand.down} faceDown={!iCanSeeOppDown} />
-          </div>
-          {oppHand.standing && <div className="yacha-sub">{oppHand.busted ? '버스트' : '스탠드'}</div>}
-        </div>
-        <div className={`yacha-turn-note ${myTurn ? 'mine' : ''}`}>{myTurn ? '내 차례' : '상대 차례'}</div>
-        <div className="yacha-side mine">
-          <div className="yacha-col-label">나</div>
-          <div className="yacha-cards">
-            {myHand.up.map((c, i) => <Card key={i} id={c.id} destroyed={c.destroyed} />)}
-            <Card id={myHand.down} />
-          </div>
-          {myHand.standing && <div className="yacha-sub">{myHand.busted ? '버스트' : '스탠드'}</div>}
-        </div>
-        {pending && pending.type === 'death' && pending.by === me && (
-          <div className="yacha-pending">
-            <div className="yacha-sub">죽음 효과: 상대의 공개 카드를 하나 파괴하세요.</div>
-            <div className="yacha-cards">
-              {oppHand.up.map((c, i) => !c.destroyed && (
-                <button key={i} type="button" className="tarot-card-btn" disabled={busy} onClick={() => run(() => resolveYachaDeath(game.id, i))}>
-                  <Card id={c.id} />
+        {picked ? (
+          <div className="yacha-note">냈습니다. {oppPicked ? '곧 결과가 나와요.' : '상대가 낼 때까지 기다리는 중'}</div>
+        ) : (
+          <>
+            <div className="yacha-note">가위바위보 중 하나를 고르세요.</div>
+            <div className="yacha-rps-row">
+              {RPS_CHOICES.map((c) => (
+                <button key={c.id} type="button" className="yacha-rps-btn" disabled={busy} onClick={() => run(() => chooseYacha(game.id, c.id))}>
+                  {c.label}
                 </button>
               ))}
             </div>
-          </div>
-        )}
-        {pending && pending.by !== me && <div className="yacha-sub">상대가 효과를 처리하는 중입니다.</div>}
-        {!pending && myTurn && !myHand.standing && (
-          <div className="modal-actions">
-            <button className="modal-cancel" disabled={busy} onClick={() => run(() => standYacha(game.id))}>스탠드</button>
-            <button className="modal-confirm" disabled={busy} onClick={() => run(() => hitYacha(game.id))}>히트</button>
-          </div>
+          </>
         )}
       </div>
     );
@@ -193,8 +167,8 @@ export default function YachaGame({ profile, room, game, onRefresh }) {
 
   if (game.status === 'result') {
     const { result } = game;
-    const myTotal = game.user_a === me ? result.totalA : result.totalB;
-    const oppTotal = game.user_a === me ? result.totalB : result.totalA;
+    const myChoice = game.user_a === me ? result.choiceA : result.choiceB;
+    const oppChoice = game.user_a === me ? result.choiceB : result.choiceA;
     const iWon = result.winner === me; const draw = !result.winner;
     const agreedMe = !!game.next_round_agree[me]; const agreedOther = !!game.next_round_agree[other];
     const maxed = game.round >= game.max_rounds;
@@ -202,20 +176,20 @@ export default function YachaGame({ profile, room, game, onRefresh }) {
       <div className="yacha-panel">
         <div className="yacha-title">{game.round}라운드 결과</div>
         {err && <div className="auth-error">{err}</div>}
-        <div className="yacha-result-big">{draw ? '무승부' : iWon ? '승리!' : '패배'}</div>
-        <div className="yacha-sub">내 합계 {myTotal} · 상대 합계 {oppTotal}</div>
-        <div className="yacha-sub">{draw ? '걸었던 것이 모두 소멸했습니다.' : iWon ? '상대가 건 것까지 모두 가져왔습니다.' : '건 것을 모두 잃었습니다.'}</div>
+        <div className="yacha-result-big">{draw ? '비김' : iWon ? '승리!' : '패배'}</div>
+        <div className="yacha-note">나: {rpsLabel(myChoice)} · 상대: {rpsLabel(oppChoice)}</div>
+        <div className="yacha-note">{draw ? '걸었던 것이 모두 소멸했습니다.' : iWon ? '상대가 건 것까지 모두 가져왔습니다.' : '건 것을 모두 잃었습니다.'}</div>
         {maxed ? (
-          <button className="a-btn accent big" style={{ marginTop: 8 }} disabled={busy} onClick={() => run(() => declineYachaNextRound(game.id))}>종료 (최대 3라운드)</button>
+          <button className="a-btn accent big" style={{ marginTop: 10, width: '100%' }} disabled={busy} onClick={() => run(() => declineYachaNextRound(game.id))}>종료 (최대 3라운드)</button>
         ) : (
           <div className="modal-actions">
             <button className="modal-cancel" disabled={busy || agreedMe} onClick={() => run(() => declineYachaNextRound(game.id))}>종료</button>
             <button className="modal-confirm" disabled={busy || agreedMe} onClick={() => run(() => agreeYachaNextRound(game.id))}>
-              {agreedMe ? '상대 응답 대기 중' : '다음 라운드 동의'}
+              {agreedMe ? '상대 응답 대기 중' : '계속하기'}
             </button>
           </div>
         )}
-        {agreedOther && !agreedMe && <div className="yacha-sub">상대가 다음 라운드에 동의했습니다.</div>}
+        {agreedOther && !agreedMe && <div className="yacha-note">상대가 계속하기에 동의했습니다.</div>}
       </div>
     );
   }
