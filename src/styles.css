@@ -189,6 +189,7 @@ body.dark .notif-row.unread:hover{background:#17574a;}
 .gamble-result .g-mult{font-size:20px;font-weight:700;margin-bottom:4px;}
 
 .chat-notice{font-size:11.5px;color:var(--text-light);text-align:center;padding:10px 0 18px;}
+.chat-sys-msg{font-size:11.5px;color:var(--text-light);text-align:center;margin:10px auto;padding:6px 12px;background:var(--surface-3);border-radius:10px;max-width:86%;}
 .chat-thread{padding:6px 4px 100px;}
 .chat-msg{margin-bottom:14px;}
 .chat-msg.mine{text-align:right;}

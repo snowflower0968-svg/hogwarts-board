@@ -31,6 +31,9 @@ export default function Chat({ profile, room, messages, onBack, onSend, onOpenGi
       <div className="chat-thread">
         {messages.length === 0 && <div className="no-comments">메시지가 없습니다.</div>}
         {messages.map((m) => {
+          if (m.type === 'yacha') {
+            return <div key={m.id} className="chat-sys-msg">{m.text}</div>;
+          }
           const mine = m.sender_id === profile.id;
           let body;
           if (m.type === 'gift') {

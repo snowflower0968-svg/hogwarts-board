@@ -190,15 +190,13 @@ export default function YachaGame({ profile, room, game, onRefresh }) {
     const winsA = game.wins?.[game.user_a] || 0; const winsB = game.wins?.[game.user_b] || 0;
     const myWins = game.user_a === me ? winsA : winsB;
     const oppWins = game.user_a === me ? winsB : winsA;
-    const potTotal = (game.pot?.points?.[game.user_a] || 0) + (game.pot?.points?.[game.user_b] || 0);
     return (
       <div className="yacha-panel">
         <div className="yacha-title">{game.round}라운드 결과</div>
         {err && <div className="auth-error">{err}</div>}
         <div className="yacha-result-big">{draw ? '비김' : iWon ? '승리!' : '패배'}</div>
         <div className="yacha-note">나: {rpsLabel(myChoice)} · 상대: {rpsLabel(oppChoice)}</div>
-        <div className="yacha-note">나 {myWins}승 · 상대 {oppWins}승 (건 것은 즉시 지급되지 않고 금고{potTotal > 0 ? ` ${potTotal}P` : ''}에 쌓여요)</div>
-        <div className="yacha-note">계속하면 더 걸 수 있고, 종료 시 더 많이 이긴 쪽이 금고를 전부 가져가요. (동률이면 각자 건 만큼 돌려받아요)</div>
+        <div className="yacha-note">나 {myWins}승 · 상대 {oppWins}승</div>
         {maxed ? (
           <button className="a-btn accent big" style={{ marginTop: 10, width: '100%' }} disabled={busy} onClick={() => run(() => declineYachaNextRound(game.id))}>종료 (최대 3라운드)</button>
         ) : (
