@@ -250,11 +250,11 @@ export function DigLogsAdmin() {
 const ACTION_LABEL = {
   user_delete: '본인 삭제', admin_grant: '관리자 지급', admin_remove: '관리자 회수', transfer: '양도',
   dig_get: '조사로 획득', shop_buy: '상점 구매', void_use: '무효권 사용',
-  galleon_exchange: '환전', galleon_admin_grant: '갈레온 지급', galleon_admin_remove: '갈레온 회수', galleon_user_edit: '직접 수정',
+  galleon_exchange: '환전', galleon_admin_grant: '갈레온 지급', galleon_admin_remove: '갈레온 회수', galleon_user_edit: '직접 수정', debt_forgive: '빚 무효화',
 };
 const ACTION_TONE = {
   user_delete: 'danger', admin_remove: 'danger', galleon_admin_remove: 'danger', admin_grant: 'ok', galleon_admin_grant: 'ok', dig_get: 'ok',
-  shop_buy: 'gold', void_use: 'gold', galleon_exchange: 'gold', galleon_user_edit: '', transfer: '',
+  shop_buy: 'gold', void_use: 'gold', galleon_exchange: 'gold', galleon_user_edit: '', debt_forgive: 'ok', transfer: '',
 };
 export function ItemLogsAdmin() {
   const [logs, setLogs] = useState(null);

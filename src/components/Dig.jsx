@@ -5,7 +5,6 @@ import { fmtDuration } from '../lib/helpers';
 export default function Dig({ profile, onDug }) {
   const [pub, setPub] = useState(undefined); // undefined: 불러오는 중, null: 아직 시작 안 됨
   const [now, setNow] = useState(Date.now());
-  const [confirmIdx, setConfirmIdx] = useState(null);
   const [info, setInfo] = useState(null);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
@@ -22,9 +21,7 @@ export default function Dig({ profile, onDug }) {
   const bonus = profile.dig_bonus || 0;
   const available = st.charges + bonus;
 
-  async function doDig() {
-    const idx = confirmIdx;
-    setConfirmIdx(null);
+  async function doDig(idx) {
     setBusy(true); setError('');
     try {
       const r = await digCell(idx);
@@ -43,7 +40,7 @@ export default function Dig({ profile, onDug }) {
       return;
     }
     if (available < 1) { setError('조사 가능 횟수가 없습니다. 다음 충전을 기다리거나 상점에서 조사권을 구매하세요.'); return; }
-    setConfirmIdx(i);
+    doDig(i); // 클릭하면 바로 깜 (확인창 없음)
   }
 
   return (
@@ -86,25 +83,13 @@ export default function Dig({ profile, onDug }) {
         </>
       )}
 
-      {confirmIdx !== null && (
-        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setConfirmIdx(null)}>
-          <div className="modal-card small">
-            <div className="confirm-msg">이 칸을 조사할까요?<br />조사 횟수가 1회 사용됩니다.</div>
-            <div className="modal-actions">
-              <button className="modal-cancel" onClick={() => setConfirmIdx(null)}>취소</button>
-              <button className="modal-confirm" onClick={doDig}>조사</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {result && (
         <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setResult(null)}>
           <div className="modal-card small">
             <div className="dig-result-title">{result.empty ? '아무것도 없었습니다' : '발견!'}</div>
             <div className="dig-result-name">{result.name}</div>
             {result.description && <div className="item-desc" style={{ textAlign: 'left' }}>{result.description}</div>}
-            {!result.empty && <div className="dig-result-sub">소지품에 추가되었습니다.</div>}
+            <div className="dig-result-sub">{result.empty ? '' : '소지품에 추가되었습니다.'}</div>
             {result.reset && <div className="dig-result-sub">모든 칸이 조사되어 새 판으로 바뀌었습니다.</div>}
             <div className="modal-actions"><button className="modal-confirm" onClick={() => setResult(null)}>확인</button></div>
           </div>

@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import {
-  fetchPointSettings, savePointSettings, fetchGalleonRate, saveGalleonRate, fetchGambleOdds, saveGambleOdds, subscribeShop, saveShopItem, deleteShopItem,
+  fetchPointSettings, savePointSettings, fetchGalleonRate, saveGalleonRate, fetchGambleOdds, saveGambleOdds,
+  fetchGambleMaxPoints, saveGambleMaxPoints, fetchVoidTiers, saveVoidTiers,
+  fetchYachaTimeoutMs, saveYachaTimeoutMs, subscribeShop, saveShopItem, deleteShopItem,
   setShopDiscount, clearShopDiscount, discountActive, effectivePrice,
 } from '../lib/api';
 import { fmtRemain } from '../lib/helpers';
@@ -77,7 +79,7 @@ export function GambleOddsCard() {
     });
   }, []);
   if (!rows) return null;
-  const valid = rows.filter((r) => Number(r.m) !== 0 && Number.isFinite(Number(r.m)) && Number(r.w) > 0);
+  const valid = rows.filter((r) => String(r.m).trim() !== '' && Number.isFinite(Number(r.m)) && Number(r.w) > 0);
   const total = valid.reduce((t, r) => t + Number(r.w), 0);
   const change = (i, k) => (e) => setRows(rows.map((r, j) => (j === i ? { ...r, [k]: e.target.value } : r)));
   async function save() {
@@ -89,7 +91,7 @@ export function GambleOddsCard() {
     } catch (e) { setErr(e.message); }
   }
   return (
-    <AdminCard title="도박 확률" hint="배율과 비중을 정해요. 비중이 클수록 자주 나오고, 아래 확률은 비중의 합으로 자동 계산돼요. 배율이 음수면 베팅액보다 더 잃어요.">
+    <AdminCard title="도박 확률" hint="배율과 비중을 정해요. 배율은 0, 0.1, 0.5처럼 소수도 되고 비중(개수)도 0.1, 0.8처럼 소수로 정할 수 있어요. 비중이 클수록 자주 나오고, 확률은 비중의 합으로 자동 계산돼요. 0배는 베팅액을 모두 잃고, 음수면 베팅액보다 더 잃어요.">
       {rows.map((r, i) => {
         const pct = total > 0 && valid.includes(r) ? (Number(r.w) / total) * 100 : 0;
         return (
@@ -111,14 +113,106 @@ export function GambleOddsCard() {
   );
 }
 
+// ---------------- 도박 최대 보유 포인트 ----------------
+export function GambleMaxPointsCard() {
+  const [v, setV] = useState(null);
+  const [saved, setSaved] = useState('');
+  const [err, setErr] = useState('');
+  const [ok, setOk] = useState('');
+  useEffect(() => { fetchGambleMaxPoints().then((n) => { const s = n == null ? '' : String(n); setV(s); setSaved(s); }); }, []);
+  if (v === null) return null;
+  async function save() {
+    setErr(''); setOk('');
+    try { await saveGambleMaxPoints(v); setSaved(v); setOk('저장했습니다.'); }
+    catch (e) { setErr(e.message); }
+  }
+  return (
+    <AdminCard title="도박 최대 보유 포인트" hint="도박 결과로 포인트가 이 값을 넘지 않게 해요. 예) 100만으로 정하면 20만에서 10배가 떠도 100만까지만 가져요. 이미 이 값보다 많이 가진 사람에게는 영향 없어요. 비우면 제한 없음.">
+      <div className="a-form-row">
+        <input className="txt-input" type="number" min="1" value={v} onChange={(e) => setV(e.target.value)} placeholder="제한 없음" style={{ width: 160 }} />
+        <button className="a-btn accent big" disabled={v === saved} onClick={save}>저장</button>
+      </div>
+      {err && <div className="auth-error" style={{ marginBottom: 0 }}>{err}</div>}
+      {ok && <div className="auth-success" style={{ marginBottom: 0 }}>{ok}</div>}
+    </AdminCard>
+  );
+}
+
+// ---------------- 도박 무효권 갈레온별 가격 ----------------
+export function VoidPriceCard() {
+  const [rows, setRows] = useState(null);
+  const [saved, setSaved] = useState('');
+  const [err, setErr] = useState('');
+  const [ok, setOk] = useState('');
+  useEffect(() => {
+    fetchVoidTiers().then((t) => {
+      const r = t.map((x) => ({ g: String(x.minGalleon), p: String(x.price) }));
+      setRows(r); setSaved(JSON.stringify(r));
+    });
+  }, []);
+  if (!rows) return null;
+  const change = (i, k) => (e) => setRows(rows.map((r, j) => (j === i ? { ...r, [k]: e.target.value } : r)));
+  async function save() {
+    setErr(''); setOk('');
+    try {
+      const out = await saveVoidTiers(rows.filter((r) => r.g !== '' && r.p !== '').map((r) => ({ minGalleon: r.g, price: r.p })));
+      const r = out.map((x) => ({ g: String(x.minGalleon), p: String(x.price) }));
+      setRows(r); setSaved(JSON.stringify(r)); setOk('저장했습니다. 다음 구매부터 적용됩니다.');
+    } catch (e) { setErr(e.message); }
+  }
+  return (
+    <AdminCard title="도박 무효권 가격 (갈레온별)" hint="보유 갈레온이 기준 이상이면 그 가격으로 팔아요. 기준에 여러 개 해당하면 가장 높은 기준이 적용되고, 어디에도 해당하지 않으면 상점에 적은 기본 가격이에요. 이 기준은 회원에게 보이지 않고 자기 가격만 보여요. 가격은 포인트(P) 기준이고, 상점 할인은 이 가격에 다시 적용돼요.">
+      {rows.map((r, i) => (
+        <div key={i} className="a-form-row">
+          <div className="price-input"><span>갈레온</span><input className="txt-input" type="number" min="0" value={r.g} onChange={change(i, 'g')} style={{ width: 80 }} aria-label="갈레온 기준" /><span>이상</span></div>
+          <div className="price-input"><input className="txt-input" type="number" min="0" value={r.p} onChange={change(i, 'p')} style={{ width: 90 }} aria-label="가격" /><span>P</span></div>
+          <button className="a-btn" onClick={() => setRows(rows.filter((_, j) => j !== i))}>삭제</button>
+        </div>
+      ))}
+      <div className="a-form-row">
+        <button className="a-btn" onClick={() => setRows([...rows, { g: '', p: '' }])}>기준 추가</button>
+        <button className="a-btn accent big" disabled={JSON.stringify(rows) === saved} onClick={save}>저장</button>
+      </div>
+      {err && <div className="auth-error" style={{ marginBottom: 0 }}>{err}</div>}
+      {ok && <div className="auth-success" style={{ marginBottom: 0 }}>{ok}</div>}
+    </AdminCard>
+  );
+}
+
+// ---------------- 야차 이탈 제한시간 ----------------
+export function YachaTimeoutCard() {
+  const [v, setV] = useState(null);
+  const [saved, setSaved] = useState('');
+  const [err, setErr] = useState('');
+  const [ok, setOk] = useState('');
+  useEffect(() => { fetchYachaTimeoutMs().then((ms) => { const s = String(Math.round(ms / 60000)); setV(s); setSaved(s); }); }, []);
+  if (v === null) return null;
+  async function save() {
+    setErr(''); setOk('');
+    try { await saveYachaTimeoutMs(v); setSaved(v); setOk('저장했습니다.'); }
+    catch (e) { setErr(e.message); }
+  }
+  return (
+    <AdminCard title="야차 이탈 제한시간" hint="상대가 이 시간 동안 응답하지 않으면 기권 처리돼요. (신청 대기, 베팅 확정, 히트/스탠드, 다음 라운드 동의 모두 동일하게 적용)">
+      <div className="a-form-row">
+        <input className="txt-input" type="number" min="1" value={v} onChange={(e) => setV(e.target.value)} style={{ width: 100 }} /><span className="a-inline-note">분</span>
+        <button className="a-btn accent big" disabled={v === saved} onClick={save}>저장</button>
+      </div>
+      {err && <div className="auth-error" style={{ marginBottom: 0 }}>{err}</div>}
+      {ok && <div className="auth-success" style={{ marginBottom: 0 }}>{ok}</div>}
+    </AdminCard>
+  );
+}
+
 // ---------------- 상점 상품 관리 ----------------
 const KIND_HINT = {
   item: '구매하면 소지품으로 들어가요.',
   dig_ticket: '구매하면 조사 횟수가 늘어나요. (최대 3회 충전과 별개, 구매 제한 없음)',
   gamble_void: '도박 직후에 1회 결과를 없던 일로 되돌립니다. 1회 1장만 보유 가능하며 사용 후 재구매가 가능합니다.',
+  yacha_ticket: '채팅에서 야차(타로 카드 게임)를 신청·수락할 때 1장씩 소모돼요. 구매 제한 없음.',
 };
-const KIND_LABEL = { item: '일반 상품', dig_ticket: '간이조사권', gamble_void: '도박 무효권' };
-const KIND_TAG = { dig_ticket: '조사권', gamble_void: '무효권' };
+const KIND_LABEL = { item: '일반 상품', dig_ticket: '간이조사권', gamble_void: '도박 무효권', yacha_ticket: '야차권' };
+const KIND_TAG = { dig_ticket: '조사권', gamble_void: '무효권', yacha_ticket: '야차권' };
 
 function KindToggle({ value, onChange }) {
   return (

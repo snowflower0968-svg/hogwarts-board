@@ -282,6 +282,22 @@ export default function App() {
 
   const otherId = chatRoom && profile ? (chatRoom.user_a === profile.id ? chatRoom.user_b : chatRoom.user_a) : null;
   const otherReadAt = otherId ? (chatReads[otherId] || 0) : 0;
+
+  // ---------------- 야차 ----------------
+  const [yachaGame, setYachaGame] = useState(null);
+  useEffect(() => {
+    if (!chatRoom?.active_yacha_id) { setYachaGame(null); return undefined; }
+    const unsub = api.subscribeYachaGame(chatRoom.active_yacha_id, setYachaGame);
+    return unsub;
+  }, [chatRoom?.active_yacha_id]);
+  async function requestYachaInRoom() {
+    try { await api.requestYacha(chatRoom.id); await loadChat(chatRoom.id); }
+    catch (e) { pushToast(e.message || "오류가 발생했습니다."); }
+  }
+  async function refreshYacha() {
+    const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh);
+    await loadChat(chatRoom.id);
+  }
   function openChatRoomById(id) {
     scrollMemo.current.delete(`chat:${id}`);
     chatFromRef.current = view === 'chat' ? chatFromRef.current : view;
@@ -428,6 +444,8 @@ export default function App() {
           {view === 'chat' && (
             <Chat profile={profile} room={chatRoom} messages={chatMessages}
               onBack={leaveChat} otherReadAt={otherReadAt}
+              yachaGame={yachaGame} onRequestYacha={requestYachaInRoom} onRefreshYacha={refreshYacha}
+              canRequestYacha={!yachaGame && (profile.yacha_bonus || 0) >= 1}
               onSend={async (text) => { await api.sendChatMessage(chatRoom.id, text); loadChat(chatRoom.id); }}
               onOpenGift={() => setGiftRoomId(chatRoom.id)}
               onAccept={async (msgId) => { await api.acceptGift(chatRoom.id, msgId); const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh); loadChat(chatRoom.id); }}

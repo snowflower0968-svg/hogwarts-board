@@ -1,7 +1,8 @@
 import React, { useRef, useState } from 'react';
 import { fmtTime, roomActive } from '../lib/helpers';
+import YachaGame from './YachaGame';
 
-export default function Chat({ profile, room, messages, onBack, onSend, onOpenGift, onAccept, onCancel, otherReadAt = 0 }) {
+export default function Chat({ profile, room, messages, onBack, onSend, onOpenGift, onAccept, onCancel, otherReadAt = 0, yachaGame, onRequestYacha, onRefreshYacha, canRequestYacha }) {
   const [text, setText] = useState('');
   const taRef = useRef(null);
   if (!room) return <div className="empty-state">채팅방이 만료되어 삭제되었습니다.</div>;
@@ -26,6 +27,7 @@ export default function Chat({ profile, room, messages, onBack, onSend, onOpenGi
     <>
       <div className="back-row" onClick={onBack}>‹ 채팅</div>
       {!active && <div className="chat-notice">대화 가능 시간이 종료되었습니다.</div>}
+      {yachaGame && <YachaGame profile={profile} room={room} game={yachaGame} onRefresh={onRefreshYacha} />}
       <div className="chat-thread">
         {messages.length === 0 && <div className="no-comments">메시지가 없습니다.</div>}
         {messages.map((m) => {
@@ -65,6 +67,7 @@ export default function Chat({ profile, room, messages, onBack, onSend, onOpenGi
               placeholder="메시지 보내기"
             />
             <div className="chat-input-buttons">
+              <button type="button" className="yacha-btn" disabled={!canRequestYacha} title={canRequestYacha ? '야차 신청' : '야차권이 필요합니다'} onClick={onRequestYacha}>야차신청</button>
               <button type="button" className="gift-btn" onClick={onOpenGift}>선물</button>
               <button type="submit">전송</button>
             </div>

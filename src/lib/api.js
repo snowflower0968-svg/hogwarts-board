@@ -9,19 +9,28 @@ import {
 } from 'firebase/auth';
 import { auth, db, loginIdToEmail } from '../firebaseClient';
 
-export const BOARDS = [
-  { id: 'free', name: '자유게시판', house: null },
-  { id: 'gryffindor', name: '그리핀도르', house: 'gryffindor' },
-  { id: 'slytherin', name: '슬리데린', house: 'slytherin' },
-  { id: 'ravenclaw', name: '래번클로', house: 'ravenclaw' },
-  { id: 'hufflepuff', name: '후플푸프', house: 'hufflepuff' },
-  { id: 'anon', name: '익명방', house: null },
-];
-export const HOUSES = [
+// 진영(기숙사+결사) 기본 목록. 회귀 전/후 각각 따로 소속을 가질 수 있어서,
+// 실제 유저의 house 값은 회귀 전엔 그대로(예: 'gryffindor'), 회귀 후엔 'post_' 접두어가 붙어요(예: 'post_gryffindor').
+const FACTIONS = [
   { id: 'gryffindor', name: '그리핀도르' },
   { id: 'slytherin', name: '슬리데린' },
   { id: 'ravenclaw', name: '래번클로' },
   { id: 'hufflepuff', name: '후플푸프' },
+  { id: 'phoenix', name: '불사조 기사단' },
+  { id: 'deatheater', name: '죽음을 먹는 자들' },
+];
+export const HOUSES = [
+  ...FACTIONS.map((f) => ({ id: f.id, name: f.name, era: 'pre' })),
+  ...FACTIONS.map((f) => ({ id: `post_${f.id}`, name: `${f.name} (회귀 후)`, era: 'post' })),
+];
+// 회귀 전/후 판별 (post_ 로 시작하면 회귀 후)
+export function houseEra(house) { return house && house.startsWith('post_') ? 'post' : 'pre'; }
+export const BOARDS = [
+  { id: 'free', name: '자유게시판', house: null, era: 'pre' },
+  { id: 'free_post', name: '자유게시판', house: null, era: 'post' },
+  ...FACTIONS.map((f) => ({ id: f.id, name: f.name, house: f.id, era: 'pre' })),
+  ...FACTIONS.map((f) => ({ id: `post_${f.id}`, name: `${f.name} (회귀 후)`, house: `post_${f.id}`, era: 'post' })),
+  { id: 'anon', name: '익명방', house: null, era: null },
 ];
 const BOARD_HOUSE = Object.fromEntries(BOARDS.map((b) => [b.id, b.house]));
 
@@ -141,6 +150,7 @@ function mapUser(id, d) {
     sound_enabled: d.soundEnabled !== false, dark_mode: !!d.darkMode, created_at: ts(d.createdAt),
     dig_charges: d.digCharges ?? null, dig_charge_at: d.digChargeAt ? ts(d.digChargeAt) : null,
     dig_bonus: d.digBonus || 0, gamble_void: d.gambleVoid || 0, galleon: d.galleon || 0, withdrawn: !!d.withdrawn, post_count: d.postCount ?? null,
+    yacha_bonus: d.yachaTicket || 0,
   };
 }
 export function subscribeOwnStatus(id, cb) {
@@ -246,7 +256,11 @@ export async function createPost(board, title, content, images = [], thumb = nul
   const userSnap = await getDoc(userRef);
   const u = userSnap.data();
   const reqHouse = BOARD_HOUSE[board];
-  if (reqHouse && !u.isAdmin && u.house !== reqHouse) throw new Error('해당 기숙사 소속만 작성 가능합니다.');
+  const reqBoard = BOARDS.find((b) => b.id === board);
+  if (!u.isAdmin && reqBoard) {
+    if (reqHouse && u.house !== reqHouse) throw new Error('해당 소속만 작성 가능합니다.');
+    if (!reqHouse && reqBoard.era && houseEra(u.house) !== reqBoard.era) throw new Error('해당 소속만 작성 가능합니다.');
+  }
   const settings = await fetchPointSettings();
   let prevCount = u.postCount;
   if (prevCount === undefined || prevCount === null) {
@@ -300,7 +314,9 @@ export async function deletePost(id) {
       granted = st.postEvery === 1 ? st.postAmount : 0;
     }
     const a = authorSnap.data();
-    const patch = { points: Math.max(0, (a.points || 0) - granted) };
+    // 빚(마이너스)은 글 삭제로 지워지지도, 늘어나지도 않게: 잔액이 0 이하면 그대로 둠
+    const curPts = a.points || 0;
+    const patch = { points: curPts > 0 ? Math.max(0, curPts - granted) : curPts };
     if (a.postCount !== undefined && a.postCount !== null) patch.postCount = Math.max(0, a.postCount - 1);
     await updateDoc(authorRef, patch);
   }
@@ -449,6 +465,8 @@ export async function fetchMyComments(id) {
 }
 // 관리자가 직접 삭제할 때만 사용 (만료된 채팅방도 기록은 남겨둠)
 export async function deleteChatRoomFully(roomId) {
+  const roomSnap0 = await getDoc(doc(db, 'chatRooms', roomId));
+  if (roomSnap0.exists() && roomSnap0.data().yachaActive) throw new Error('야차 게임이 진행 중인 방은 삭제할 수 없습니다. 게임이 끝난 뒤 삭제하세요.');
   const [msgsSnap, readsSnap] = await Promise.all([
     getDocs(collection(db, 'chatRooms', roomId, 'messages')),
     getDocs(collection(db, 'chatRooms', roomId, 'reads')),
@@ -480,7 +498,7 @@ export async function fetchMyChats(id) {
   const now = Date.now();
   const alive = [];
   for (const r of rooms) {
-    if (r.expiresAt && ts(r.expiresAt) <= now) continue; // 사용자에게는 안 보이지만 관리자는 기록을 볼 수 있음
+    if (r.expiresAt && ts(r.expiresAt) <= now && !r.yachaActive) continue; // 사용자에게는 안 보이지만 관리자는 기록을 볼 수 있음
     alive.push(r);
   }
   return Promise.all(alive.map(async (r) => {
@@ -501,7 +519,7 @@ export async function fetchMyChats(id) {
 function cleanOdds(list) {
   const out = (Array.isArray(list) ? list : [])
     .map((o) => [Number(o.multiplier ?? o[0]), Number(o.weight ?? o[1])])
-    .filter(([m, w]) => Number.isFinite(m) && m !== 0 && Number.isFinite(w) && w > 0);
+    .filter(([m, w]) => Number.isFinite(m) && Number.isFinite(w) && w > 0);
   return out.length ? out : DEFAULT_GAMBLE_ODDS;
 }
 export async function fetchGambleOdds() {
@@ -514,8 +532,22 @@ export async function fetchGambleOdds() {
 export async function saveGambleOdds(list) {
   const odds = cleanOdds(list).map(([multiplier, weight]) => ({ multiplier, weight }));
   if (!odds.some((o) => o.multiplier > 0)) throw new Error('플러스 배율이 하나 이상 있어야 합니다.');
-  await setDoc(doc(db, 'settings', 'gamble'), { odds });
+  await setDoc(doc(db, 'settings', 'gamble'), { odds }, { merge: true });
   return odds.map((o) => [o.multiplier, o.weight]);
+}
+// 도박으로 가질 수 있는 최대 포인트 (null 이면 제한 없음). 도박 결과로만 적용되고, 이미 그 이상 가진 사람에게는 영향 없음
+export async function fetchGambleMaxPoints() {
+  try {
+    const snap = await getDoc(doc(db, 'settings', 'gamble'));
+    if (snap.exists() && snap.data().maxPoints != null) return Number(snap.data().maxPoints);
+  } catch (e) { /* 제한 없음 */ }
+  return null;
+}
+export async function saveGambleMaxPoints(raw) {
+  const v = raw === '' || raw === null || raw === undefined ? null : Math.floor(Number(raw));
+  if (v !== null && !(v > 0)) throw new Error('0보다 큰 숫자를 입력하거나, 비워서 제한을 해제하세요.');
+  await setDoc(doc(db, 'settings', 'gamble'), { maxPoints: v }, { merge: true });
+  return v;
 }
 export async function spinGamble(bet) {
   const userRef = doc(db, 'users', uid());
@@ -523,13 +555,14 @@ export async function spinGamble(bet) {
   const pts = snap.data().points || 0;
   if (pts < 0) throw new Error('포인트가 부족하여 이용할 수 없습니다.');
   if (!bet || bet <= 0 || bet > pts) throw new Error('베팅 금액을 확인하세요.');
-  const odds = await fetchGambleOdds();
+  const [odds, maxPoints] = await Promise.all([fetchGambleOdds(), fetchGambleMaxPoints()]);
   const total = odds.reduce((t, [, w]) => t + w, 0);
   let r = Math.random() * total;
   let m = odds[odds.length - 1][0];
   for (const [mult, w] of odds) { if (r < w) { m = mult; break; } r -= w; }
   const delta = gambleDelta(bet, m);
-  const newBal = pts - bet + delta;
+  let newBal = pts - bet + delta;
+  if (maxPoints != null && newBal > maxPoints) newBal = maxPoints; // 도박으로는 이 값을 넘게 가질 수 없음
   const logRef = doc(collection(db, 'gambleLogs'));
   await setDoc(logRef, { userId: uid(), bet, multiplier: m, resultDelta: delta, balanceAfter: newBal, voided: false, createdAt: serverTimestamp() });
   await updateDoc(userRef, { points: newBal, lastGambleLogId: logRef.id });
@@ -610,7 +643,10 @@ export async function fetchChatRoom(roomId) {
   const snap = await getDoc(doc(db, 'chatRooms', roomId));
   if (!snap.exists()) return null;
   const d = snap.data();
-  return { id: roomId, post_id: d.postId, user_a: d.userA, user_b: d.userB, created_at: ts(d.createdAt), expires_at: d.expiresAt ? ts(d.expiresAt) : null };
+  return {
+    id: roomId, post_id: d.postId, user_a: d.userA, user_b: d.userB, created_at: ts(d.createdAt), expires_at: d.expiresAt ? ts(d.expiresAt) : null,
+    yacha_active: !!d.yachaActive, active_yacha_id: d.activeYachaId || null,
+  };
 }
 export async function fetchChatMessages(roomId) {
   const q = query(collection(db, 'chatRooms', roomId, 'messages'), orderBy('createdAt'));
@@ -636,7 +672,7 @@ export async function sendChatMessage(roomId, text) {
   const roomSnap = await getDoc(doc(db, 'chatRooms', roomId));
   if (!roomSnap.exists()) throw new Error('채팅방을 찾을 수 없습니다.');
   const r = roomSnap.data();
-  if (roomExpired(r)) throw new Error('대화 가능 시간이 종료되었습니다.');
+  if (roomExpired(r) && !r.yachaActive) throw new Error('대화 가능 시간이 종료되었습니다.');
   await addDoc(collection(db, 'chatRooms', roomId, 'messages'), { senderId: uid(), type: 'text', text, createdAt: serverTimestamp() });
   const recipient = r.userA === uid() ? r.userB : r.userA;
   await addDoc(collection(db, 'notifications'), { userId: recipient, type: 'chat_message', roomId, preview: text.slice(0, 80), read: false, createdAt: serverTimestamp() });
@@ -646,7 +682,7 @@ export async function sendGift(roomId, amount) {
   const roomSnap = await getDoc(doc(db, 'chatRooms', roomId));
   if (!roomSnap.exists()) throw new Error('채팅방을 찾을 수 없습니다.');
   const r = roomSnap.data();
-  if (roomExpired(r)) throw new Error('대화 가능 시간이 종료되었습니다.');
+  if (roomExpired(r) && !r.yachaActive) throw new Error('대화 가능 시간이 종료되었습니다.');
   const userRef = doc(db, 'users', uid());
   const userSnap = await getDoc(userRef);
   const bal = userSnap.data().points || 0;
@@ -663,7 +699,7 @@ export async function sendGiftItem(roomId, itemId, qtyRaw) {
   const roomSnap = await getDoc(doc(db, 'chatRooms', roomId));
   if (!roomSnap.exists()) throw new Error('채팅방을 찾을 수 없습니다.');
   const r = roomSnap.data();
-  if (roomExpired(r)) throw new Error('대화 가능 시간이 종료되었습니다.');
+  if (roomExpired(r) && !r.yachaActive) throw new Error('대화 가능 시간이 종료되었습니다.');
   const recipient = r.userA === uid() ? r.userB : r.userA;
   const item = await removeItemFromUser(uid(), itemId, qty); // 보낸 순간 내 소지품에서 빠짐 (취소하면 돌아옴)
   await addDoc(collection(db, 'chatRooms', roomId, 'messages'), {
@@ -794,6 +830,22 @@ export async function fetchRecentPostStamps(n = 80) {
   const snap = await getDocs(query(collection(db, 'posts'), orderBy('createdAt', 'desc'), limit(n)));
   return snap.docs.map((d) => ({ board_id: d.data().boardId, author_id: d.data().authorId, created_at: d.data().createdAt ? d.data().createdAt.toMillis() : Date.now() }));
 }
+// 전체 회원의 포인트를 0으로, 보유 소지품을 전부 비움 (개인 기재·갈레온은 건드리지 않음)
+export async function adminResetAllPointsAndItems() {
+  const snap = await getDocs(collection(db, 'users'));
+  let count = 0;
+  for (const d of snap.docs) {
+    // eslint-disable-next-line no-await-in-loop
+    const itemsSnap = await getDocs(collection(db, 'users', d.id, 'items'));
+    // eslint-disable-next-line no-await-in-loop
+    await Promise.all(itemsSnap.docs.map((it) => deleteDoc(it.ref)));
+    // eslint-disable-next-line no-await-in-loop
+    await updateDoc(doc(db, 'users', d.id), { points: 0 });
+    count += 1;
+  }
+  await logItem({ action: 'reset_all', userId: 'admin', userName: '관리자', itemName: '전체 포인트·소지품 초기화', itemDescription: `대상 ${count}명`, qty: count });
+  return count;
+}
 export async function fetchAllUsers() {
   const snap = await getDocs(query(collection(db, 'users'), orderBy('createdAt')));
   return snap.docs.map((d) => mapUser(d.id, d.data()));
@@ -827,7 +879,9 @@ export async function toggleAdminRole(id) {
 export async function grantPoints(id, amount, message) {
   const ref = doc(db, 'users', id);
   const snap = await getDoc(ref);
-  const newPts = Math.max(0, (snap.data().points || 0) + amount);
+  const curPts = snap.data().points || 0;
+  // 잔액이 0 이상일 때만 0 밑으로 내려가지 않게 막고, 빚이 있으면 더하고 빼는 값을 그대로 반영
+  const newPts = curPts >= 0 ? Math.max(0, curPts + amount) : curPts + amount;
   await updateDoc(ref, { points: newPts });
   await addDoc(collection(db, 'notifications'), { userId: id, type: 'admin_grant', points: amount, message: message || null, read: false, createdAt: serverTimestamp() });
 }
@@ -1120,7 +1174,7 @@ export async function adminGrantDigTickets(userId, deltaRaw, message) {
 }
 
 // ================= 상점 =================
-const SHOP_KINDS = ['item', 'dig_ticket', 'gamble_void'];
+const SHOP_KINDS = ['item', 'dig_ticket', 'gamble_void', 'yacha_ticket'];
 function mapShop(id, d) {
   return {
     id, name: d.name, description: d.description || '', price: Number(d.price) || 0,
@@ -1161,10 +1215,38 @@ export async function clearShopDiscount(ids) {
   ids.forEach((id) => batch.update(doc(db, 'shopItems', id), { discountPercent: 0, discountUntil: null }));
   await batch.commit();
 }
+// ---- 도박 무효권 갈레온별 가격 (관리자 설정, 일반 회원에게는 자기 가격만 보임) ----
+function cleanTiers(list) {
+  return (Array.isArray(list) ? list : [])
+    .map((t) => ({ minGalleon: Number(t.minGalleon), price: Number(t.price) }))
+    .filter((t) => Number.isFinite(t.minGalleon) && t.minGalleon >= 0 && Number.isFinite(t.price) && t.price >= 0)
+    .sort((a, b) => a.minGalleon - b.minGalleon);
+}
+export async function fetchVoidTiers() {
+  try {
+    const snap = await getDoc(doc(db, 'settings', 'voidPrice'));
+    if (snap.exists()) return cleanTiers(snap.data().tiers);
+  } catch (e) { /* 규칙 없음 */ }
+  return [];
+}
+export async function saveVoidTiers(list) {
+  const tiers = cleanTiers(list).map((t) => ({ minGalleon: Math.floor(t.minGalleon), price: Math.floor(t.price) }));
+  const seen = new Set();
+  tiers.forEach((t) => { if (seen.has(t.minGalleon)) throw new Error('같은 갈레온 기준이 두 번 들어 있어요.'); seen.add(t.minGalleon); });
+  await setDoc(doc(db, 'settings', 'voidPrice'), { tiers });
+  return tiers;
+}
+// 내 갈레온 이상인 기준 중 가장 높은 기준의 가격. 해당하는 기준이 없으면 상점에 적힌 기본 가격
+export function voidPriceFor(basePrice, tiers, galleon) {
+  let price = basePrice;
+  (tiers || []).forEach((t) => { if (galleon >= t.minGalleon) price = t.price; });
+  return price;
+}
 export async function buyShopItem(shopId, qtyRaw) {
   const qty = parseInt(qtyRaw, 10);
   if (!qty || qty <= 0 || qty > 99) throw new Error('수량은 1~99 사이로 입력하세요.');
   const me = uid();
+  const voidTiers = await fetchVoidTiers();
   let info;
   await runTransaction(db, async (tx) => {
     const shopRef = doc(db, 'shopItems', shopId);
@@ -1173,6 +1255,7 @@ export async function buyShopItem(shopId, qtyRaw) {
     const us = await tx.get(userRef);
     if (!ss.exists() || ss.data().enabled === false) throw new Error('판매 중이 아닌 상품입니다.');
     const shop = mapShop(ss.id, ss.data());
+    if (shop.kind === 'gamble_void') shop.price = voidPriceFor(shop.price, voidTiers, us.data().galleon || 0);
     const now = Date.now();
     const unit = effectivePrice(shop, now);
     const total = unit * qty;
@@ -1190,6 +1273,7 @@ export async function buyShopItem(shopId, qtyRaw) {
     const patch = { points: pts - total };
     if (shop.kind === 'dig_ticket') patch.digBonus = increment(qty);
     if (shop.kind === 'gamble_void') patch.gambleVoid = 1;
+    if (shop.kind === 'yacha_ticket') patch.yachaTicket = increment(qty);
     tx.update(userRef, patch);
     if (itemRef) {
       if (itemSnap.exists()) tx.update(itemRef, { qty: increment(qty) });
@@ -1334,4 +1418,466 @@ export async function adminGrantGambleVoid(userId, delta, message) {
   });
   await logItem({ action: delta > 0 ? 'admin_grant' : 'admin_remove', userId, userName: name, itemName: '도박 무효권', itemDescription: '', qty: 1 });
   await addDoc(collection(db, 'notifications'), { userId, type: 'admin_item', message: `도박 무효권 ${delta > 0 ? '지급' : '회수'}${message ? ' · ' + message : ''}`, read: false, createdAt: serverTimestamp() });
+}
+
+
+// ================= 관리자: 기숙사 일괄 지급 / 빚 무효화 =================
+// houses: 기숙사 id 배열. kind: points | galleon | ticket | void | item. 결과: 성공/건너뜀/실패 명단
+export async function adminBulkGrant(houses, kind, opts) {
+  if (!houses.length) throw new Error('기숙사를 선택하세요.');
+  const all = await fetchAllUsers();
+  const targets = all.filter((u) => u.approved && !u.withdrawn && houses.includes(u.house));
+  if (!targets.length) throw new Error('선택한 기숙사에 지급할 회원이 없습니다.');
+  const n = parseInt(opts.amount, 10);
+  const msg = (opts.message || '').trim();
+  if ((kind === 'points' || kind === 'galleon' || kind === 'ticket') && !(n > 0)) throw new Error('수량을 입력하세요.');
+  if (kind === 'item' && !(opts.name || '').trim()) throw new Error('소지품 이름을 입력하세요.');
+  const result = { ok: 0, skipped: [], failed: [] };
+  for (const u of targets) {
+    try {
+      if (kind === 'points') await grantPoints(u.id, n, msg);
+      else if (kind === 'galleon') await adminAdjustGalleon(u.id, n, msg);
+      else if (kind === 'ticket') await adminGrantDigTickets(u.id, n, msg);
+      else if (kind === 'void') await adminGrantGambleVoid(u.id, 1, msg);
+      else await adminGrantItem(u.id, opts.name, opts.description, opts.qty || 1, msg);
+      result.ok += 1;
+    } catch (e) {
+      if (kind === 'void' && /이미/.test(e.message || '')) result.skipped.push(u.character_name);
+      else result.failed.push(`${u.character_name}(${e.message || '오류'})`);
+    }
+  }
+  return result;
+}
+// 빚 무효화: 마이너스인 포인트·갈레온을 0으로 (플러스인 값은 건드리지 않음)
+export async function adminForgiveDebt(userId) {
+  let before = {}; let name = '';
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db, 'users', userId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('회원 정보를 찾을 수 없습니다.');
+    const d = snap.data();
+    name = d.characterName;
+    before = { points: d.points || 0, galleon: d.galleon || 0 };
+    const patch = {};
+    if (before.points < 0) patch.points = 0;
+    if (before.galleon < 0) patch.galleon = 0;
+    if (!Object.keys(patch).length) throw new Error('무효화할 빚이 없습니다.');
+    tx.update(ref, patch);
+  });
+  const parts = [];
+  if (before.points < 0) parts.push(`포인트 ${before.points}`);
+  if (before.galleon < 0) parts.push(`갈레온 ${before.galleon}`);
+  await logItem({ action: 'debt_forgive', userId, userName: name, itemName: '빚 무효화', itemDescription: parts.join(', '), qty: 1 });
+  await addDoc(collection(db, 'notifications'), { userId, type: 'admin_item', message: `빚이 무효화되었습니다. (${parts.join(', ')} → 0)`, read: false, createdAt: serverTimestamp() });
+  return parts;
+}
+
+// ================= 야차 (타로 카드 1:1 게임) =================
+// 메이저 아르카나 22장. value: 고정값 숫자, 또는 [1,11] (0 바보 / XXI 세계는 유리한 쪽으로 자동 계산)
+export const TAROT_CARDS = [
+  { id: 0, roman: '0', name: '바보' }, { id: 1, roman: 'I', name: '마법사' },
+  { id: 2, roman: 'II', name: '여사제', effect: 'peek' }, { id: 3, roman: 'III', name: '여제' },
+  { id: 4, roman: 'IV', name: '황제' }, { id: 5, roman: 'V', name: '교황' },
+  { id: 6, roman: 'VI', name: '연인' }, { id: 7, roman: 'VII', name: '전차' },
+  { id: 8, roman: 'VIII', name: '힘' }, { id: 9, roman: 'IX', name: '은둔자' },
+  { id: 10, roman: 'X', name: '운명의 수레바퀴', effect: 'swap' }, { id: 11, roman: 'XI', name: '정의' },
+  { id: 12, roman: 'XII', name: '매달린 사람' }, { id: 13, roman: 'XIII', name: '죽음', effect: 'death' },
+  { id: 14, roman: 'XIV', name: '절제', effect: 'temperance' }, { id: 15, roman: 'XV', name: '악마' },
+  { id: 16, roman: 'XVI', name: '탑', effect: 'tower' }, { id: 17, roman: 'XVII', name: '별' },
+  { id: 18, roman: 'XVIII', name: '달' }, { id: 19, roman: 'XIX', name: '태양' },
+  { id: 20, roman: 'XX', name: '심판' }, { id: 21, roman: 'XXI', name: '세계' },
+];
+export function tarotCard(id) { return TAROT_CARDS[id]; }
+function tarotFixedValue(id) { if (id >= 1 && id <= 10) return id; if (id >= 11 && id <= 20) return id - 10; return null; }
+// 바스트 여부까지 고려해서 가능한 최선의 합 계산 (0/XXI 은 1 또는 11 중 유리한 쪽)
+function tarotBestTotal(ids) {
+  const fixed = []; let wild = 0;
+  ids.forEach((id) => { if (id === 0 || id === 21) wild += 1; else fixed.push(tarotFixedValue(id)); });
+  const base = fixed.reduce((a, b) => a + b, 0);
+  if (!wild) return base;
+  let best = null;
+  for (let mask = 0; mask < (1 << wild); mask += 1) {
+    let t = base;
+    for (let i = 0; i < wild; i += 1) t += ((mask >> i) & 1) ? 11 : 1;
+    if (best === null) best = t;
+    else {
+      const bestOk = best <= 21; const tOk = t <= 21;
+      if (tOk && !bestOk) best = t;
+      else if (tOk && bestOk && t > best) best = t;
+      else if (!tOk && !bestOk && t < best) best = t;
+    }
+  }
+  return best;
+}
+// up: [{id, destroyed}], down: cardId|null, temperance: 효과 보유 여부(공개 때 ±2 중 유리한 쪽을 자동 적용)
+export function yachaHandTotal(up, down, temperance) {
+  const ids = (up || []).filter((c) => !c.destroyed).map((c) => c.id);
+  if (down != null) ids.push(down);
+  const total = tarotBestTotal(ids);
+  if (!temperance) return total;
+  const cands = [total, total + 2, total - 2].filter((v) => v <= 21);
+  return cands.length ? Math.max(...cands) : Math.min(total, total + 2, total - 2);
+}
+export function yachaIsBust(total) { return total >= 22; }
+function shuffledDeck() {
+  const a = TAROT_CARDS.map((c) => c.id);
+  for (let i = a.length - 1; i > 0; i -= 1) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+const YACHA_MAX_ROUNDS = 3;
+
+export async function fetchYachaTimeoutMs() {
+  try { const snap = await getDoc(doc(db, 'settings', 'yacha')); if (snap.exists() && snap.data().timeoutMs) return Number(snap.data().timeoutMs); } catch (e) { /* 기본값 */ }
+  return 3 * 60 * 1000;
+}
+export async function saveYachaTimeoutMs(minutesRaw) {
+  const min = Number(minutesRaw);
+  if (!(min > 0)) throw new Error('0보다 큰 숫자(분)를 입력하세요.');
+  await setDoc(doc(db, 'settings', 'yacha'), { timeoutMs: Math.round(min * 60 * 1000) }, { merge: true });
+  return min;
+}
+
+function mapYacha(id, d) {
+  return {
+    id, room_id: d.roomId, user_a: d.userA, user_b: d.userB, status: d.status, requested_by: d.requestedBy,
+    round: d.round || 1, max_rounds: YACHA_MAX_ROUNDS, deck: d.deck || [], hands: d.hands || {}, turn: d.turn || null,
+    bets: d.bets || {}, pending_effect: d.pendingEffect || null, next_round_agree: d.nextRoundAgree || {},
+    result: d.result || null, last_action_at: d.lastActionAt ? ts(d.lastActionAt) : Date.now(), created_at: ts(d.createdAt),
+  };
+}
+export async function fetchYachaGame(gameId) {
+  const snap = await getDoc(doc(db, 'yachaGames', gameId));
+  return snap.exists() ? mapYacha(gameId, snap.data()) : null;
+}
+export function subscribeYachaGame(gameId, onChange) {
+  return onSnapshot(doc(db, 'yachaGames', gameId), (snap) => onChange(snap.exists() ? mapYacha(gameId, snap.data()) : null));
+}
+// 신청: 야차권 1장 이상 필요(소모는 수락 시). 같은 방에서 진행 중인 야차가 있거나, 내가 이미 다른 방에서 진행 중이면 신청 불가
+export async function requestYacha(roomId) {
+  const me = uid();
+  const roomRef = doc(db, 'chatRooms', roomId);
+  const mySnap = await getDoc(doc(db, 'users', me));
+  if ((mySnap.data()?.yachaTicket || 0) < 1) throw new Error('야차권이 없습니다. 상점에서 구매하세요.');
+  const mine = await getDocs(query(collection(db, 'yachaGames'), where('userA', '==', me)));
+  const mine2 = await getDocs(query(collection(db, 'yachaGames'), where('userB', '==', me)));
+  const ACTIVE = ['pending', 'betting', 'playing', 'result'];
+  if ([...mine.docs, ...mine2.docs].some((d) => ACTIVE.includes(d.data().status))) throw new Error('이미 진행 중인 야차가 있습니다. (동시에 1개만 가능)');
+  const roomSnap = await getDoc(roomRef);
+  if (!roomSnap.exists()) throw new Error('채팅방을 찾을 수 없습니다.');
+  const r = roomSnap.data();
+  if (r.yachaActive) throw new Error('이 채팅방에는 이미 진행 중인 야차가 있습니다.');
+  const other = r.userA === me ? r.userB : r.userA;
+  const gameRef = doc(collection(db, 'yachaGames'));
+  await setDoc(gameRef, {
+    roomId, userA: me, userB: other, status: 'pending', requestedBy: me, round: 1,
+    hands: {}, bets: {}, nextRoundAgree: {}, lastActionAt: serverTimestamp(), createdAt: serverTimestamp(),
+  });
+  await updateDoc(roomRef, { yachaActive: true, activeYachaId: gameRef.id });
+  await addDoc(collection(db, 'notifications'), { userId: other, type: 'chat_message', roomId, preview: '야차 신청이 왔습니다.', read: false, createdAt: serverTimestamp() });
+  return gameRef.id;
+}
+async function endYachaGame(gameRef, roomRef, status, extra = {}) {
+  await updateDoc(gameRef, { status, lastActionAt: serverTimestamp(), ...extra });
+  await updateDoc(roomRef, { yachaActive: false, activeYachaId: null });
+}
+export async function declineYacha(gameId) {
+  const gameRef = doc(db, 'yachaGames', gameId);
+  const snap = await getDoc(gameRef);
+  if (!snap.exists()) return;
+  const roomRef = doc(db, 'chatRooms', snap.data().roomId);
+  await endYachaGame(gameRef, roomRef, 'declined');
+}
+// 수락: 양쪽 다 야차권 1장 소모, 베팅 단계로 전환
+export async function acceptYacha(gameId) {
+  const me = uid();
+  const gameRef = doc(db, 'yachaGames', gameId);
+  await runTransaction(db, async (tx) => {
+    const gs = await tx.get(gameRef);
+    if (!gs.exists() || gs.data().status !== 'pending') throw new Error('이미 처리된 신청입니다.');
+    const g = gs.data();
+    const otherUid = g.requestedBy === me ? null : g.requestedBy;
+    if (!otherUid) throw new Error('본인이 신청한 야차는 수락할 수 없습니다.');
+    const aRef = doc(db, 'users', g.userA); const bRef = doc(db, 'users', g.userB);
+    const [as, bs] = await Promise.all([tx.get(aRef), tx.get(bRef)]);
+    if ((as.data().yachaTicket || 0) < 1 || (bs.data().yachaTicket || 0) < 1) throw new Error('두 사람 모두 야차권이 1장 이상 있어야 시작할 수 있습니다.');
+    tx.update(aRef, { yachaTicket: increment(-1) });
+    tx.update(bRef, { yachaTicket: increment(-1) });
+    tx.update(gameRef, {
+      status: 'betting', hands: {}, bets: {}, nextRoundAgree: {}, pendingEffect: null,
+      result: null, lastActionAt: serverTimestamp(),
+    });
+  });
+}
+// 베팅 내용 입력(확정 전까지 자유롭게 수정 가능)
+export async function setYachaBet(gameId, points, items) {
+  const me = uid();
+  const n = Math.max(0, parseInt(points, 10) || 0);
+  const gameRef = doc(db, 'yachaGames', gameId);
+  const gs = await getDoc(gameRef);
+  if (!gs.exists() || gs.data().status !== 'betting') throw new Error('지금은 베팅할 수 없습니다.');
+  if (gs.data().bets?.[me]?.confirmed) throw new Error('이미 확정했습니다.');
+  const mySnap = await getDoc(doc(db, 'users', me));
+  if (n > (mySnap.data().points || 0)) throw new Error('보유 포인트보다 많이 걸 수 없습니다.');
+  const bets = { ...(gs.data().bets || {}) };
+  bets[me] = { points: n, items: (items || []).map((it) => ({ id: it.id, name: it.name, description: it.description || '', qty: Math.max(1, parseInt(it.qty, 10) || 1) })), confirmed: false };
+  await updateDoc(gameRef, { bets, lastActionAt: serverTimestamp() });
+}
+// 베팅 확정: 포인트/소지품을 보관(에스크로) 상태로 가져감. 양쪽 다 확정되면 바로 카드 분배
+export async function confirmYachaBet(gameId) {
+  const me = uid();
+  const gameRef = doc(db, 'yachaGames', gameId);
+  await runTransaction(db, async (tx) => {
+    const gs = await tx.get(gameRef);
+    if (!gs.exists() || gs.data().status !== 'betting') throw new Error('지금은 확정할 수 없습니다.');
+    const g = gs.data();
+    const myBet = g.bets?.[me];
+    if (!myBet) throw new Error('먼저 베팅 내용을 입력하세요.');
+    if (myBet.confirmed) return;
+    const userRef = doc(db, 'users', me);
+    const us = await tx.get(userRef);
+    const pts = us.data().points || 0;
+    if (pts < myBet.points) throw new Error('보유 포인트보다 많이 걸 수 없습니다.');
+    const itemRefs = myBet.items.map((it) => doc(db, 'users', me, 'items', it.id));
+    const itemSnaps = await Promise.all(itemRefs.map((ref) => tx.get(ref)));
+    myBet.items.forEach((it, i) => {
+      const s = itemSnaps[i];
+      if (!s.exists() || (s.data().qty || 0) < it.qty) throw new Error(`${it.name} 수량이 부족합니다.`);
+    });
+    tx.update(userRef, { points: pts - myBet.points });
+    itemSnaps.forEach((s, i) => {
+      const it = myBet.items[i]; const left = (s.data().qty || 0) - it.qty;
+      if (left <= 0) tx.delete(itemRefs[i]); else tx.update(itemRefs[i], { qty: left });
+    });
+    const bets = { ...g.bets, [me]: { ...myBet, confirmed: true } };
+    const other = g.userA === me ? g.userB : g.userA;
+    const patch = { bets, lastActionAt: serverTimestamp() };
+    if (bets[other]?.confirmed) {
+      const deck = shuffledDeck();
+      const hands = {};
+      [g.userA, g.userB].forEach((u) => {
+        hands[u] = { up: [{ id: deck.pop(), destroyed: false }], down: deck.pop(), busted: false, standing: false, temperance: false, peeked: [] };
+      });
+      patch.status = 'playing'; patch.deck = deck; patch.hands = hands; patch.turn = g.userA; patch.pendingEffect = null;
+    }
+    tx.update(gameRef, patch);
+  });
+}
+// 효과 적용(히트로 공개해서 받았을 때만). hands 는 호출부에서 복사해서 넘기고 돌려받아 반영
+function applyYachaEffect(hands, meUid, oppUid, cardId) {
+  const card = tarotCard(cardId);
+  let pending = null;
+  if (card.effect === 'peek') {
+    hands[meUid].peeked = [...(hands[meUid].peeked || []), oppUid];
+  } else if (card.effect === 'swap') {
+    const tmp = hands[meUid].down; hands[meUid].down = hands[oppUid].down; hands[oppUid].down = tmp;
+    hands[meUid].peeked = []; hands[oppUid].peeked = [];
+  } else if (card.effect === 'temperance') {
+    hands[meUid].temperance = true;
+  } else if (card.effect === 'tower') {
+    const mine = hands[meUid].up.filter((c) => !c.destroyed && c.id !== cardId);
+    if (mine.length) {
+      let biggest = mine[0];
+      mine.forEach((c) => { if ((tarotFixedValue(c.id) ?? 11) > (tarotFixedValue(biggest.id) ?? 11)) biggest = c; });
+      hands[meUid].up = hands[meUid].up.map((c) => (c === biggest ? { ...c, destroyed: true } : c));
+    }
+  } else if (card.effect === 'death') {
+    const targets = hands[oppUid].up.filter((c) => !c.destroyed);
+    if (targets.length) pending = { type: 'death', by: meUid, target: oppUid };
+  }
+  return pending;
+}
+// 턴 넘기기 규칙: 내가 방금 서면(스탠드/버스트) 상대가 아직 안 섰으면 상대 턴, 둘 다 섰으면 공개 단계로
+function nextYachaTurn(hands, meUid, oppUid) {
+  const meStanding = hands[meUid].standing; const oppStanding = hands[oppUid].standing;
+  if (meStanding && oppStanding) return null; // 공개 단계
+  if (meStanding) return oppUid;
+  if (oppStanding) return meUid; // 상대가 이미 섰으면 내가 계속
+  return oppUid;
+}
+async function settleYachaRound(tx, gameRef, g) {
+  const { userA, userB, hands, bets } = g;
+  const totalA = yachaHandTotal(hands[userA].up, hands[userA].down, hands[userA].temperance);
+  const totalB = yachaHandTotal(hands[userB].up, hands[userB].down, hands[userB].temperance);
+  const bustA = yachaIsBust(totalA) || hands[userA].busted;
+  const bustB = yachaIsBust(totalB) || hands[userB].busted;
+  let winner = null;
+  if (bustA && bustB) winner = null;
+  else if (bustA) winner = userB;
+  else if (bustB) winner = userA;
+  else if (totalA === totalB) winner = null;
+  else winner = totalA > totalB ? userA : userB;
+  await settleYachaPot(tx, winner, bets);
+  const result = { totalA, totalB, bustA, bustB, winner, at: Date.now() };
+  tx.update(gameRef, { status: 'result', result, lastActionAt: serverTimestamp(), turn: null });
+}
+// 이번 라운드에 걸린 모든 포인트/소지품을 승자에게(무승부면 그냥 소멸)
+async function settleYachaPot(tx, winner, bets) {
+  const uids = Object.keys(bets);
+  if (!winner) return; // 무승부: 이미 보관(에스크로) 상태에서 빠져나온 적이 없으므로 그대로 소멸
+  const totalPoints = uids.reduce((s, u) => s + (bets[u]?.points || 0), 0);
+  if (totalPoints > 0) {
+    const wRef = doc(db, 'users', winner);
+    const ws = await tx.get(wRef);
+    tx.update(wRef, { points: (ws.data().points || 0) + totalPoints });
+  }
+  for (const u of uids) {
+    for (const it of bets[u]?.items || []) {
+      const key = itemKey(it.name, it.description);
+      const ref = doc(db, 'users', winner, 'items', key);
+      // eslint-disable-next-line no-await-in-loop
+      const s = await tx.get(ref);
+      if (s.exists()) tx.update(ref, { qty: increment(it.qty) });
+      else tx.set(ref, { name: it.name, description: it.description || '', qty: it.qty, createdAt: serverTimestamp() });
+    }
+  }
+}
+export async function hitYacha(gameId) {
+  const me = uid();
+  const gameRef = doc(db, 'yachaGames', gameId);
+  await runTransaction(db, async (tx) => {
+    const gs = await tx.get(gameRef);
+    if (!gs.exists() || gs.data().status !== 'playing') throw new Error('지금은 히트할 수 없습니다.');
+    const g = gs.data();
+    if (g.turn !== me) throw new Error('내 차례가 아닙니다.');
+    if (g.pendingEffect) throw new Error('먼저 효과를 처리하세요.');
+    const other = g.userA === me ? g.userB : g.userA;
+    const hands = JSON.parse(JSON.stringify(g.hands));
+    if (hands[me].standing) throw new Error('이미 스탠드했습니다.');
+    const deck = [...g.deck];
+    if (!deck.length) { hands[me].standing = true; tx.update(gameRef, { hands, turn: nextYachaTurn(hands, me, other), lastActionAt: serverTimestamp() }); return; }
+    const cardId = deck.pop();
+    hands[me].up.push({ id: cardId, destroyed: false });
+    const pending = applyYachaEffect(hands, me, other, cardId);
+    const total = yachaHandTotal(hands[me].up, hands[me].down, hands[me].temperance);
+    if (yachaIsBust(total)) { hands[me].standing = true; hands[me].busted = true; }
+    const patch = { hands, deck, lastActionAt: serverTimestamp(), pendingEffect: pending };
+    if (!pending) {
+      const turn = nextYachaTurn(hands, me, other);
+      patch.turn = turn;
+      if (turn === null) { tx.update(gameRef, patch); await settleYachaRound(tx, gameRef, { ...g, hands }); return; }
+    }
+    tx.update(gameRef, patch);
+  });
+}
+export async function standYacha(gameId) {
+  const me = uid();
+  const gameRef = doc(db, 'yachaGames', gameId);
+  await runTransaction(db, async (tx) => {
+    const gs = await tx.get(gameRef);
+    if (!gs.exists() || gs.data().status !== 'playing') throw new Error('지금은 스탠드할 수 없습니다.');
+    const g = gs.data();
+    if (g.turn !== me) throw new Error('내 차례가 아닙니다.');
+    if (g.pendingEffect) throw new Error('먼저 효과를 처리하세요.');
+    const other = g.userA === me ? g.userB : g.userA;
+    const hands = JSON.parse(JSON.stringify(g.hands));
+    hands[me].standing = true;
+    const turn = nextYachaTurn(hands, me, other);
+    if (turn === null) { tx.update(gameRef, { hands, turn: null, lastActionAt: serverTimestamp() }); await settleYachaRound(tx, gameRef, { ...g, hands }); return; }
+    tx.update(gameRef, { hands, turn, lastActionAt: serverTimestamp() });
+  });
+}
+// XIII 죽음 효과 처리: 상대의 공개 카드 중 하나를 골라 파괴
+export async function resolveYachaDeath(gameId, targetUpIndex) {
+  const me = uid();
+  const gameRef = doc(db, 'yachaGames', gameId);
+  await runTransaction(db, async (tx) => {
+    const gs = await tx.get(gameRef);
+    if (!gs.exists() || gs.data().status !== 'playing') throw new Error('처리할 수 없습니다.');
+    const g = gs.data();
+    if (!g.pendingEffect || g.pendingEffect.type !== 'death' || g.pendingEffect.by !== me) throw new Error('처리할 효과가 없습니다.');
+    const other = g.pendingEffect.target;
+    const hands = JSON.parse(JSON.stringify(g.hands));
+    const target = hands[other].up[targetUpIndex];
+    if (!target || target.destroyed) throw new Error('파괴할 수 없는 카드입니다.');
+    target.destroyed = true;
+    const turn = nextYachaTurn(hands, me, other);
+    const patch = { hands, pendingEffect: null, lastActionAt: serverTimestamp(), turn };
+    if (turn === null) { tx.update(gameRef, patch); await settleYachaRound(tx, gameRef, { ...g, hands }); return; }
+    tx.update(gameRef, patch);
+  });
+}
+// 다음 라운드 동의/거절
+export async function agreeYachaNextRound(gameId) {
+  const me = uid();
+  const gameRef = doc(db, 'yachaGames', gameId);
+  const roomRefFor = async (g) => doc(db, 'chatRooms', g.roomId);
+  await runTransaction(db, async (tx) => {
+    const gs = await tx.get(gameRef);
+    if (!gs.exists() || gs.data().status !== 'result') throw new Error('지금은 동의할 수 없습니다.');
+    const g = gs.data();
+    const agree = { ...(g.nextRoundAgree || {}), [me]: true };
+    const other = g.userA === me ? g.userB : g.userA;
+    if (!agree[other]) { tx.update(gameRef, { nextRoundAgree: agree, lastActionAt: serverTimestamp() }); return; }
+    if (g.round >= YACHA_MAX_ROUNDS) { tx.update(gameRef, { status: 'ended', lastActionAt: serverTimestamp() }); tx.update(await roomRefFor(g), { yachaActive: false, activeYachaId: null }); return; }
+    const aRef = doc(db, 'users', g.userA); const bRef = doc(db, 'users', g.userB);
+    const [as, bs] = await Promise.all([tx.get(aRef), tx.get(bRef)]);
+    if ((as.data().yachaTicket || 0) < 1 || (bs.data().yachaTicket || 0) < 1) {
+      tx.update(gameRef, { status: 'ended', lastActionAt: serverTimestamp() });
+      tx.update(await roomRefFor(g), { yachaActive: false, activeYachaId: null });
+      return;
+    }
+    tx.update(aRef, { yachaTicket: increment(-1) }); tx.update(bRef, { yachaTicket: increment(-1) });
+    tx.update(gameRef, {
+      status: 'betting', round: (g.round || 1) + 1, hands: {}, bets: {}, nextRoundAgree: {}, pendingEffect: null, result: null, lastActionAt: serverTimestamp(),
+    });
+  });
+}
+export async function declineYachaNextRound(gameId) {
+  const gameRef = doc(db, 'yachaGames', gameId);
+  const gs = await getDoc(gameRef);
+  if (!gs.exists()) return;
+  const roomRef = doc(db, 'chatRooms', gs.data().roomId);
+  await endYachaGame(gameRef, roomRef, 'ended');
+}
+// 비활성 처리: 상대가 응답할 차례인데 설정된 시간 동안 아무 반응이 없으면 기권 처리
+export async function checkYachaTimeout(gameId) {
+  const me = uid();
+  const gameRef = doc(db, 'yachaGames', gameId);
+  const timeoutMs = await fetchYachaTimeoutMs();
+  let acted = false;
+  await runTransaction(db, async (tx) => {
+    const gs = await tx.get(gameRef);
+    if (!gs.exists()) return;
+    const g = gs.data();
+    const elapsed = Date.now() - (g.lastActionAt ? g.lastActionAt.toMillis() : Date.now());
+    if (elapsed < timeoutMs) return;
+    const other = g.userA === me ? g.userB : g.userA;
+    const roomRef = doc(db, 'chatRooms', g.roomId);
+    if (g.status === 'pending') { tx.update(gameRef, { status: 'declined', lastActionAt: serverTimestamp() }); tx.update(roomRef, { yachaActive: false, activeYachaId: null }); acted = true; return; }
+    if (g.status === 'betting') {
+      const bets = g.bets || {};
+      if (!bets[other]?.confirmed) {
+        // 확정 안 한 쪽이 있으면 아무 것도 보관된 게 없거나 한쪽만 보관된 상태 — 보관된 쪽은 환불하고 종료
+        if (bets[me]?.confirmed) {
+          const ref = doc(db, 'users', me);
+          const us = await tx.get(ref);
+          tx.update(ref, { points: (us.data().points || 0) + (bets[me].points || 0) });
+          for (const it of bets[me].items || []) {
+            const key = itemKey(it.name, it.description);
+            const iref = doc(db, 'users', me, 'items', key);
+            // eslint-disable-next-line no-await-in-loop
+            const is = await tx.get(iref);
+            if (is.exists()) tx.update(iref, { qty: increment(it.qty) }); else tx.set(iref, { name: it.name, description: it.description || '', qty: it.qty, createdAt: serverTimestamp() });
+          }
+        }
+        tx.update(gameRef, { status: 'ended', lastActionAt: serverTimestamp() });
+        tx.update(roomRef, { yachaActive: false, activeYachaId: null });
+        acted = true;
+      }
+      return;
+    }
+    if (g.status === 'playing' && g.turn === other) {
+      const hands = JSON.parse(JSON.stringify(g.hands));
+      hands[other].standing = true; hands[other].busted = true;
+      await settleYachaRound(tx, gameRef, { ...g, hands });
+      acted = true;
+      return;
+    }
+    if (g.status === 'result' && !(g.nextRoundAgree || {})[other]) {
+      tx.update(gameRef, { status: 'ended', lastActionAt: serverTimestamp() });
+      tx.update(roomRef, { yachaActive: false, activeYachaId: null });
+      acted = true;
+    }
+  });
+  return acted;
 }

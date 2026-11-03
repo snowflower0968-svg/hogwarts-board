@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { BOARDS } from '../lib/api';
 import { fmtDateTime, notifText } from '../lib/helpers';
 import { canViewBoard } from './Board';
@@ -68,8 +68,10 @@ export function NotifPanel({ notifications, onOpen, onClose, onReadAll }) {
 }
 
 export function Sidebar({ profile, view, currentBoard, selectBoard, openMyPage, openPersonal, openGamble, openDig, openShop, openSettings, openAdmin, hasChatUnread, boardDots = {}, mobileOpen, closeMobile }) {
-  const mainBoards = BOARDS.filter((b) => b.id !== 'anon' && canViewBoard(profile, b.id));
+  const freeBoards = BOARDS.filter((b) => b.era && !b.house && canViewBoard(profile, b.id));
+  const houseBoards = BOARDS.filter((b) => b.house && canViewBoard(profile, b.id));
   const anonBoard = BOARDS.find((b) => b.id === 'anon');
+  const [collapsed, setCollapsed] = useState(profile.is_admin); // 관리자는 소속 게시판이 많아서 기본으로 접어둠
   const renderBoard = (b) => {
     return (
       <div key={b.id} className={`sidebar-item ${view === 'board' && currentBoard === b.id ? 'active' : ''}`} onClick={() => { selectBoard(b.id); closeMobile(); }}>
@@ -80,7 +82,15 @@ export function Sidebar({ profile, view, currentBoard, selectBoard, openMyPage, 
   return (
     <div className={`sidebar ${mobileOpen ? 'open' : ''}`}>
       <div className="sidebar-section">게시판</div>
-      {mainBoards.map(renderBoard)}
+      {freeBoards.map(renderBoard)}
+      {profile.is_admin ? (
+        <>
+          <div className="sidebar-item sidebar-collapse-toggle" onClick={() => setCollapsed((v) => !v)}>
+            소속 게시판 {houseBoards.length}개 <span className={`collapse-arrow ${collapsed ? '' : 'open'}`}>▾</span>
+          </div>
+          {!collapsed && houseBoards.map(renderBoard)}
+        </>
+      ) : houseBoards.map(renderBoard)}
       <div className="sidebar-divider" />
       {anonBoard && renderBoard(anonBoard)}
       <div className="sidebar-divider" />

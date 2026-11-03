@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { subscribeShop, buyShopItem, discountActive, effectivePrice } from '../lib/api';
+import { subscribeShop, buyShopItem, discountActive, effectivePrice, fetchVoidTiers, voidPriceFor } from '../lib/api';
 import { fmtRemain } from '../lib/helpers';
 
 function ProductCard({ s, now, points, onBuy, holdingVoid }) {
@@ -17,6 +17,7 @@ function ProductCard({ s, now, points, onBuy, holdingVoid }) {
           {s.name}
           {s.kind === 'dig_ticket' && <span className="shop-tag">간이조사권</span>}
           {isVoid && <span className="shop-tag">도박 무효권</span>}
+          {s.kind === 'yacha_ticket' && <span className="shop-tag">야차권</span>}
           {active && <span className="shop-sale">{s.discountPercent}% 할인</span>}
         </div>
         <div className="shop-price">
@@ -27,6 +28,7 @@ function ProductCard({ s, now, points, onBuy, holdingVoid }) {
       {s.description && <div className="shop-desc">{s.description}</div>}
       {s.kind === 'dig_ticket' && <div className="shop-desc">구매 횟수 제한 없음 · 최대 3회 충전과 별개로 보관돼요.</div>}
       {isVoid && <div className="shop-desc">도박 직후에 1회 결과를 없던 일로 되돌립니다. 1회 1장만 보유 가능하며 사용 후 재구매가 가능합니다.</div>}
+      {s.kind === 'yacha_ticket' && <div className="shop-desc">채팅에서 야차를 신청·수락할 때 1장씩 소모돼요. 구매 횟수 제한 없음.</div>}
       {active && s.discountUntil && <div className="shop-timer">할인 종료까지 {fmtRemain(s.discountUntil - now)}</div>}
       <div className="shop-buy">
         {!isVoid && <input type="number" min="1" max="99" value={qty} onChange={(e) => setQty(e.target.value)} />}
@@ -45,8 +47,10 @@ export default function Shop({ profile, onBought }) {
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [tiers, setTiers] = useState([]);
 
   useEffect(() => subscribeShop(setItems), []);
+  useEffect(() => { fetchVoidTiers().then(setTiers).catch(() => {}); }, []);
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
 
   async function doBuy() {
@@ -76,13 +80,14 @@ export default function Shop({ profile, onBought }) {
         <div className="dig-timer">
           보유 조사권 <b>{profile.dig_bonus || 0}</b>장
           <div style={{ marginTop: 4 }}>도박 무효권 <b>{profile.gamble_void || 0}</b>장</div>
+          <div style={{ marginTop: 4 }}>야차권 <b>{profile.yacha_bonus || 0}</b>장</div>
         </div>
       </div>
       {msg && <div className="auth-success" style={{ margin: '0 4px 10px' }}>{msg}</div>}
       {err && <div className="auth-error" style={{ margin: '0 4px 10px' }}>{err}</div>}
       {items === null && <div className="empty-state">불러오는 중</div>}
       {items && list.length === 0 && <div className="empty-state">판매 중인 상품이 없습니다.</div>}
-      {list.map((s) => <ProductCard key={s.id} s={s} now={now} points={profile.points} holdingVoid={(profile.gamble_void || 0) >= 1} onBuy={(item, q, total) => !busy && setConfirm({ s: item, q, total })} />)}
+      {list.map((raw) => ({ ...raw, price: raw.kind === 'gamble_void' ? voidPriceFor(raw.price, tiers, profile.galleon || 0) : raw.price })).map((s) => <ProductCard key={s.id} s={s} now={now} points={profile.points} holdingVoid={(profile.gamble_void || 0) >= 1} onBuy={(item, q, total) => !busy && setConfirm({ s: item, q, total })} />)}
 
       {confirm && (
         <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setConfirm(null)}>

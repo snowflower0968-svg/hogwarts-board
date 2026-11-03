@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   HOUSES, grantPoints, adminAdjustGalleon, adminGrantDigTickets, adminGrantGambleVoid,
-  adminGrantItem, adminRemoveItem, fetchItemsOf, fetchNotes, fetchProfileById, fetchDigRewards, fetchShopItems,
+  adminGrantItem, adminRemoveItem, adminBulkGrant, adminForgiveDebt, fetchItemsOf, fetchNotes, fetchProfileById, fetchDigRewards, fetchShopItems,
 } from '../lib/api';
 import { fmtTime, houseName } from '../lib/helpers';
 import { Avatar, AdminCard, QtyStepper, SegTabs } from './Ui';
@@ -191,6 +191,19 @@ function CharacterDetail({ userId, allUsers, actions, onBack, onWithdraw }) {
       {err && <div className="auth-error a-flash">{err}</div>}
       {ok && <div className="auth-success a-flash">{ok}</div>}
 
+      {((prof.points || 0) < 0 || (prof.galleon || 0) < 0) && (
+        <AdminCard title="빚 무효화" hint="마이너스인 포인트·갈레온을 0으로 만들어요. 플러스인 값은 그대로예요.">
+          <div className="a-item">
+            <div className="a-item-main">
+              <div className="a-item-title">
+                {(prof.points || 0) < 0 && `포인트 ${prof.points}`}{(prof.points || 0) < 0 && (prof.galleon || 0) < 0 && ' · '}{(prof.galleon || 0) < 0 && `갈레온 ${prof.galleon}`}
+              </div>
+            </div>
+            <button className="a-btn accent" disabled={busy} onClick={() => run(() => adminForgiveDebt(userId), '빚을 무효화했습니다.')}>한 번에 무효화</button>
+          </div>
+        </AdminCard>
+      )}
+
       <AdminCard title="지급 · 회수">
         <SegTabs variant="sub" items={CURRENCIES} value={kind} onChange={pickKind} />
         {kind === 'void' ? (
@@ -289,6 +302,80 @@ function CharacterDetail({ userId, allUsers, actions, onBack, onWithdraw }) {
   );
 }
 
+// ---------------- 기숙사 일괄 지급 ----------------
+function BulkGrant({ allUsers, refresh }) {
+  const [houses, setHouses] = useState([]);
+  const [kind, setKind] = useState('points');
+  const [amount, setAmount] = useState('');
+  const [msg, setMsg] = useState('');
+  const [name, setName] = useState('');
+  const [desc, setDesc] = useState('');
+  const [qty, setQty] = useState('1');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [ok, setOk] = useState('');
+  const members = allUsers.filter((u) => u.approved && !u.withdrawn);
+  const countOf = (hid) => members.filter((u) => u.house === hid).length;
+  const total = members.filter((u) => houses.includes(u.house)).length;
+  const toggle = (id) => setHouses((h) => (h.includes(id) ? h.filter((x) => x !== id) : [...h, id]));
+  const allOn = houses.length === HOUSES.length;
+  const KINDS = [...CURRENCIES, { id: 'item', label: '소지품' }];
+
+  async function send() {
+    setErr(''); setOk('');
+    if (!houses.length) { setErr('기숙사를 선택하세요.'); return; }
+    const what = kind === 'item' ? `${name.trim() || '소지품'} x${parseInt(qty, 10) || 1}` : kind === 'void' ? '도박 무효권 1장' : `${CUR_NAME[kind]} ${parseInt(amount, 10) || 0}${CUR_UNIT[kind]}`;
+    const who = houses.map(houseName).join(', ');
+    if (!window.confirm(`${who} 소속 ${total}명에게\n${what}을(를) 지급할까요?`)) return;
+    setBusy(true);
+    try {
+      const r = await adminBulkGrant(houses, kind, { amount, message: msg, name, description: desc, qty });
+      let text = `${r.ok}명에게 지급했습니다.`;
+      if (r.skipped.length) text += ` 이미 보유 중이라 건너뜀: ${r.skipped.join(', ')}.`;
+      if (r.failed.length) { setErr(`지급하지 못한 회원: ${r.failed.join(', ')}`); }
+      setOk(text);
+      await refresh();
+    } catch (e) { setErr(e.message || '오류가 발생했습니다.'); }
+    finally { setBusy(false); }
+  }
+  return (
+    <>
+      {err && <div className="auth-error a-flash">{err}</div>}
+      {ok && <div className="auth-success a-flash">{ok}</div>}
+      <AdminCard title="기숙사 일괄 지급" hint="선택한 기숙사에 속한 승인된 회원 모두에게 한 번에 보상을 보내요. 기숙사가 정해지지 않은 회원은 받지 못해요.">
+        <div className="a-chips" style={{ marginBottom: 10 }}>
+          <button type="button" className={allOn ? 'on' : ''} onClick={() => setHouses(allOn ? [] : HOUSES.map((h) => h.id))}>전체</button>
+          {HOUSES.map((h) => (
+            <button key={h.id} type="button" className={houses.includes(h.id) ? 'on' : ''} onClick={() => toggle(h.id)}>{h.name} {countOf(h.id)}명</button>
+          ))}
+        </div>
+        <SegTabs variant="sub" items={KINDS} value={kind} onChange={(k) => { setKind(k); setAmount(''); setErr(''); setOk(''); }} />
+        {kind === 'void' ? (
+          <div className="a-hint" style={{ margin: '0 0 10px' }}>도박 무효권은 1장씩만 지급돼요. 이미 가진 회원은 건너뛰어요.</div>
+        ) : kind === 'item' ? (
+          <>
+            <input className="txt-input" style={{ width: '100%', marginBottom: 8 }} type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="소지품 이름" />
+            <input className="txt-input" style={{ width: '100%', marginBottom: 8 }} type="text" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="효과 / 설명 (선택)" />
+            <div className="a-form-row"><QtyStepper value={qty} onChange={setQty} /></div>
+          </>
+        ) : kind === 'ticket' ? (
+          <div className="a-form-row"><QtyStepper value={amount || '1'} onChange={setAmount} max={999} /></div>
+        ) : (
+          <>
+            <input className="txt-input" style={{ width: '100%', marginBottom: 8 }} type="number" min="1" inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={`${CUR_NAME[kind]} 수량 (1명당)`} />
+            <div className="a-chips">
+              {CHIPS.map((c) => <button key={c} type="button" onClick={() => setAmount(String((parseInt(amount, 10) || 0) + c))}>+{c}</button>)}
+              <button type="button" className="clear" onClick={() => setAmount('')}>지우기</button>
+            </div>
+          </>
+        )}
+        <input className="txt-input" style={{ width: '100%', margin: '10px 0' }} type="text" value={msg} onChange={(e) => setMsg(e.target.value)} placeholder="알림에 함께 보낼 메시지 (선택)" />
+        <button className="a-btn accent big" style={{ width: '100%' }} disabled={busy} onClick={send}>{busy ? '지급 중' : `선택한 ${total}명에게 지급`}</button>
+      </AdminCard>
+    </>
+  );
+}
+
 // ---------------- 회원 구역 ----------------
 export function MembersSection({ pendingUsers, allUsers, actions, refresh }) {
   const [sub, setSub] = useState('chars');
@@ -314,8 +401,8 @@ export function MembersSection({ pendingUsers, allUsers, actions, refresh }) {
   return (
     <>
       <SegTabs variant="sub" value={sub} onChange={(v) => { touched.current = true; setSub(v); }}
-        items={[{ id: 'pending', label: '가입 승인', badge: pendingUsers.length || null }, { id: 'chars', label: '캐릭터' }]} />
-      {sub === 'pending' ? <PendingList users={pendingUsers} actions={actions} /> : <CharacterList users={visible} onOpen={setOpenId} />}
+        items={[{ id: 'pending', label: '가입 승인', badge: pendingUsers.length || null }, { id: 'chars', label: '캐릭터' }, { id: 'bulk', label: '일괄 지급' }]} />
+      {sub === 'pending' ? <PendingList users={pendingUsers} actions={actions} /> : sub === 'bulk' ? <BulkGrant allUsers={allUsers} refresh={refresh} /> : <CharacterList users={visible} onOpen={setOpenId} />}
     </>
   );
 }

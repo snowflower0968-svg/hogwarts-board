@@ -524,3 +524,35 @@ body.dark .a-nav button.on{background:var(--surface-3);}
 .read-mark.read{color:var(--accent);}
 .mobile-menu-btn{position:relative;}
 .menu-dot{position:absolute;top:4px;right:4px;margin:0;}
+.a-chips button.on{background:var(--accent);border-color:var(--accent);color:#fff;}
+.sidebar-collapse-toggle{color:var(--text-light);font-size:12.5px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;}
+.collapse-arrow{display:inline-block;transition:transform .15s;}
+.collapse-arrow.open{transform:rotate(180deg);}
+
+/* ---------------- 야차 ---------------- */
+.yacha-btn{background:#2b1750;color:#e9c46a;border:1px solid #4a2f82;}
+.yacha-panel{margin:10px 4px 14px;padding:14px;border-radius:14px;background:linear-gradient(160deg,#1c1033,#2a1850);border:1px solid #4a2f82;color:#f1e6ff;}
+.yacha-title{font-weight:700;font-size:14px;margin-bottom:8px;color:#e9c46a;}
+.yacha-sub{font-size:12.5px;color:#cbb8ef;margin:4px 0;}
+.yacha-ended{text-align:center;color:#cbb8ef;}
+.yacha-bet-cols{display:flex;gap:14px;flex-wrap:wrap;}
+.yacha-bet-cols > div{flex:1;min-width:140px;}
+.yacha-col-label{font-size:11.5px;color:#cbb8ef;margin-bottom:6px;}
+.yacha-bet-items{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0;}
+.yacha-bet-chip{background:#3a2366;border-radius:10px;padding:3px 8px;font-size:11.5px;display:inline-flex;align-items:center;gap:4px;}
+.yacha-bet-chip button{background:none;border:none;color:#cbb8ef;cursor:pointer;font-size:12px;padding:0;}
+.yacha-opp-bet{font-size:13px;background:#241243;border-radius:10px;padding:8px;}
+.yacha-confirmed-note{font-size:11.5px;color:#9ddfae;margin-top:4px;}
+.yacha-table{text-align:center;}
+.yacha-side{margin:8px 0;}
+.yacha-cards{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;}
+.tarot-card{width:56px;height:84px;border-radius:8px;background:linear-gradient(160deg,#3a2366,#1c1033);border:1px solid #e9c46a;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:10px;color:#f1e6ff;padding:4px;transition:transform .2s;}
+.tarot-card.back{font-size:26px;color:#e9c46a;}
+.tarot-card.destroyed{opacity:.3;text-decoration:line-through;}
+.tarot-roman{font-weight:700;font-size:13px;color:#e9c46a;}
+.tarot-name{margin-top:3px;text-align:center;line-height:1.2;}
+.tarot-card-btn{background:none;border:none;padding:0;cursor:pointer;}
+.yacha-turn-note{font-size:12.5px;font-weight:600;color:#cbb8ef;margin:6px 0;}
+.yacha-turn-note.mine{color:#e9c46a;}
+.yacha-pending{margin:10px 0;}
+.yacha-result-big{font-size:20px;font-weight:700;color:#e9c46a;margin:6px 0;}

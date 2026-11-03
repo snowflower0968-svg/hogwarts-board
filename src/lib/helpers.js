@@ -140,6 +140,7 @@ export function fmtRemain(ms) {
 
 // 채팅방 대화 가능 여부: 첫 메시지 전(expires_at 없음)이면 가능, 이후엔 만료 시각 전까지 가능
 export function roomActive(room) {
+  if (room.yacha_active) return true; // 야차 진행 중이면 만료 시각이 지나도 계속 대화 가능
   return !room.expires_at || new Date(room.expires_at).getTime() > Date.now();
 }
 

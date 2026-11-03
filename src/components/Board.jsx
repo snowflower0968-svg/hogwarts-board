@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { BOARDS } from '../lib/api';
+import { BOARDS, houseEra } from '../lib/api';
 import { boardName, fmtTime, clip } from '../lib/helpers';
 
 function canPostToBoard(profile, boardId) {
   if (profile.is_admin) return true;
   const b = BOARDS.find((x) => x.id === boardId);
-  if (!b || !b.house) return true;
-  return profile.house === b.house;
+  if (!b) return true;
+  if (b.house) return profile.house === b.house;
+  if (b.era) return houseEra(profile.house) === b.era; // 자유게시판: 내 회귀 전/후 소속과 같은 쪽만
+  return true; // 익명방 등 소속 구분이 없는 게시판
 }
 
 // 기숙사 게시판은 해당 기숙사(와 관리자)만 볼 수 있음
