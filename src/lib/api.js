@@ -1556,7 +1556,8 @@ export async function saveYachaTimeoutMs(minutesRaw) {
 function mapYacha(id, d) {
   return {
     id, room_id: d.roomId, user_a: d.userA, user_b: d.userB, status: d.status, requested_by: d.requestedBy,
-    round: d.round || 1, max_rounds: YACHA_MAX_ROUNDS, bets: d.bets || {}, last_bet: d.lastBet || {},
+    round: d.round || 1, max_rounds: YACHA_MAX_ROUNDS, bets: d.bets || {},
+    wins: d.wins || {}, pot: d.pot || { points: {}, items: {} },
     choices: d.choices || {}, next_round_agree: d.nextRoundAgree || {},
     result: d.result || null, last_action_at: d.lastActionAt ? ts(d.lastActionAt) : Date.now(), created_at: ts(d.createdAt),
   };
@@ -1586,7 +1587,7 @@ export async function requestYacha(roomId) {
   const gameRef = doc(collection(db, 'yachaGames'));
   await setDoc(gameRef, {
     roomId, userA: me, userB: other, status: 'pending', requestedBy: me, round: 1,
-    bets: {}, lastBet: {}, choices: {}, nextRoundAgree: {}, lastActionAt: serverTimestamp(), createdAt: serverTimestamp(),
+    bets: {}, wins: {}, pot: { points: {}, items: {} }, choices: {}, nextRoundAgree: {}, lastActionAt: serverTimestamp(), createdAt: serverTimestamp(),
   });
   await updateDoc(roomRef, { yachaActive: true, activeYachaId: gameRef.id });
   await addDoc(collection(db, 'notifications'), { userId: other, type: 'chat_message', roomId, preview: '야차 신청이 왔습니다.', read: false, createdAt: serverTimestamp() });
@@ -1627,7 +1628,7 @@ export async function acceptYacha(gameId) {
     });
   });
 }
-// 베팅 내용 입력(확정 전까지 자유롭게 수정 가능)
+// 베팅 내용 입력(확정 전까지 자유롭게 수정 가능). 라운드마다 거는 금액에 제한 없음
 export async function setYachaBet(gameId, points, items) {
   const me = uid();
   const n = Math.max(0, parseInt(points, 10) || 0);
@@ -1641,7 +1642,7 @@ export async function setYachaBet(gameId, points, items) {
   bets[me] = { points: n, items: (items || []).map((it) => ({ id: it.id, name: it.name, description: it.description || '', qty: Math.max(1, parseInt(it.qty, 10) || 1) })), confirmed: false };
   await updateDoc(gameRef, { bets, lastActionAt: serverTimestamp() });
 }
-// 베팅 확정: 포인트/소지품을 보관(에스크로) 상태로 가져감. 2라운드부터는 직전 라운드보다 더 걸어야 함. 양쪽 다 확정되면 선택 단계로
+// 베팅 확정: 포인트/소지품을 보관(에스크로) 상태로 가져감. 양쪽 다 확정되면 선택 단계로
 export async function confirmYachaBet(gameId) {
   const me = uid();
   const gameRef = doc(db, 'yachaGames', gameId);
@@ -1652,9 +1653,6 @@ export async function confirmYachaBet(gameId) {
     const myBet = g.bets?.[me];
     if (!myBet) throw new Error('먼저 베팅 내용을 입력하세요.');
     if (myBet.confirmed) return;
-    if ((g.round || 1) > 1 && myBet.points <= (g.lastBet?.[me] || 0)) {
-      throw new Error(`직전 라운드(${g.lastBet?.[me] || 0}P)보다 더 걸어야 합니다.`);
-    }
     const userRef = doc(db, 'users', me);
     const us = await tx.get(userRef);
     const pts = us.data().points || 0;
@@ -1677,37 +1675,92 @@ export async function confirmYachaBet(gameId) {
     tx.update(gameRef, patch);
   });
 }
-// Firestore 트랜잭션은 모든 읽기가 모든 쓰기보다 먼저 와야 해서, 정산에 필요한 문서를
-// (있다면) 전부 먼저 읽어둔 뒤에야 게임 문서를 포함한 모든 쓰기를 한 번에 적용함
-async function settleYachaPotAndWrite(tx, gameRef, g, winnerUid, choiceA, choiceB) {
-  const { bets } = g;
-  let winnerSnap = null;
-  const itemOps = [];
-  if (winnerUid) {
-    winnerSnap = await tx.get(doc(db, 'users', winnerUid));
-    const uids = Object.keys(bets);
-    for (const u of uids) {
-      for (const it of bets[u]?.items || []) {
-        const ref = doc(db, 'users', winnerUid, 'items', itemKey(it.name, it.description));
-        // eslint-disable-next-line no-await-in-loop
-        const s = await tx.get(ref);
-        itemOps.push({ ref, exists: s.exists(), qty: s.exists() ? s.data().qty || 0 : 0, it });
-      }
-    }
-  }
+// 이번 라운드에 건 것을 금고(누적 판돈)에 합쳐넣음 — 순수 계산, DB 접근 없음
+function foldBetsIntoPot(pot, bets, uidA, uidB) {
+  const nextPoints = { ...(pot.points || {}) };
+  const nextItems = {};
+  Object.keys(pot.items || {}).forEach((u) => { nextItems[u] = [...(pot.items[u] || [])]; });
+  [uidA, uidB].forEach((u) => {
+    const b = bets[u];
+    if (!b) return;
+    nextPoints[u] = (nextPoints[u] || 0) + (b.points || 0);
+    const list = nextItems[u] || [];
+    (b.items || []).forEach((it) => {
+      const idx = list.findIndex((x) => x.name === it.name && (x.description || '') === (it.description || ''));
+      if (idx >= 0) list[idx] = { ...list[idx], qty: list[idx].qty + it.qty };
+      else list.push({ name: it.name, description: it.description || '', qty: it.qty });
+    });
+    nextItems[u] = list;
+  });
+  return { points: nextPoints, items: nextItems };
+}
+// 라운드 정산: 즉시 지급하지 않고 이긴 쪽의 승수만 +1, 이번 라운드에 건 것은 금고에 누적 (쓰기만 수행, 읽기 없음)
+function settleYachaRound(tx, gameRef, g, winnerUid, choiceA, choiceB) {
+  const pot = foldBetsIntoPot(g.pot || { points: {}, items: {} }, g.bets || {}, g.userA, g.userB);
+  const wins = { ...(g.wins || {}) };
+  if (winnerUid) wins[winnerUid] = (wins[winnerUid] || 0) + 1;
   const result = { choiceA, choiceB, winner: winnerUid, at: Date.now() };
-  const lastBet = { ...(g.lastBet || {}), [g.userA]: bets[g.userA]?.points || 0, [g.userB]: bets[g.userB]?.points || 0 };
-  tx.update(gameRef, { status: 'result', result, lastBet, choices: {}, lastActionAt: serverTimestamp() });
+  tx.update(gameRef, { status: 'result', result, wins, pot, bets: {}, choices: {}, lastActionAt: serverTimestamp() });
+}
+// 금고 최종 정산을 위한 읽기 전용 단계 (승수가 더 많은 쪽이 전부 가져가고, 동률이면 각자 건 만큼 돌려받음)
+async function readPotFinalizeOps(tx, g) {
+  const pot = g.pot || { points: {}, items: {} };
+  const wins = g.wins || {};
+  const winsA = wins[g.userA] || 0; const winsB = wins[g.userB] || 0;
+  const winnerUid = winsA === winsB ? null : (winsA > winsB ? g.userA : g.userB);
+  const totalPointsA = pot.points?.[g.userA] || 0; const totalPointsB = pot.points?.[g.userB] || 0;
+  const itemsA = pot.items?.[g.userA] || []; const itemsB = pot.items?.[g.userB] || [];
   if (winnerUid) {
-    const totalPoints = Object.keys(bets).reduce((s, u) => s + (bets[u]?.points || 0), 0);
-    if (totalPoints > 0) tx.update(doc(db, 'users', winnerUid), { points: (winnerSnap.data().points || 0) + totalPoints });
-    itemOps.forEach(({ ref, exists, qty, it }) => {
+    const winnerRef = doc(db, 'users', winnerUid);
+    const winnerSnap = await tx.get(winnerRef);
+    const itemOps = [];
+    for (const it of [...itemsA, ...itemsB]) {
+      const ref = doc(db, 'users', winnerUid, 'items', itemKey(it.name, it.description));
+      // eslint-disable-next-line no-await-in-loop
+      const s = await tx.get(ref);
+      itemOps.push({ ref, exists: s.exists(), qty: s.exists() ? s.data().qty || 0 : 0, it });
+    }
+    return { mode: 'winner', winnerRef, winnerBal: winnerSnap.data().points || 0, totalPoints: totalPointsA + totalPointsB, itemOps };
+  }
+  const aRef = doc(db, 'users', g.userA); const bRef = doc(db, 'users', g.userB);
+  const [as, bs] = await Promise.all([tx.get(aRef), tx.get(bRef)]);
+  const itemOpsA = []; const itemOpsB = [];
+  for (const it of itemsA) {
+    const ref = doc(db, 'users', g.userA, 'items', itemKey(it.name, it.description));
+    // eslint-disable-next-line no-await-in-loop
+    const s = await tx.get(ref);
+    itemOpsA.push({ ref, exists: s.exists(), qty: s.exists() ? s.data().qty || 0 : 0, it });
+  }
+  for (const it of itemsB) {
+    const ref = doc(db, 'users', g.userB, 'items', itemKey(it.name, it.description));
+    // eslint-disable-next-line no-await-in-loop
+    const s = await tx.get(ref);
+    itemOpsB.push({ ref, exists: s.exists(), qty: s.exists() ? s.data().qty || 0 : 0, it });
+  }
+  return { mode: 'tie', aRef, bRef, aBal: as.data().points || 0, bBal: bs.data().points || 0, totalPointsA, totalPointsB, itemOpsA, itemOpsB };
+}
+// 금고 최종 정산의 쓰기 전용 단계 (readPotFinalizeOps 결과를 그대로 적용)
+function writePotFinalizeOps(tx, ops) {
+  if (ops.mode === 'winner') {
+    if (ops.totalPoints > 0) tx.update(ops.winnerRef, { points: ops.winnerBal + ops.totalPoints });
+    ops.itemOps.forEach(({ ref, exists, qty, it }) => {
       if (exists) tx.update(ref, { qty: qty + it.qty });
       else tx.set(ref, { name: it.name, description: it.description || '', qty: it.qty, createdAt: serverTimestamp() });
     });
+    return;
   }
+  if (ops.totalPointsA > 0) tx.update(ops.aRef, { points: ops.aBal + ops.totalPointsA });
+  if (ops.totalPointsB > 0) tx.update(ops.bRef, { points: ops.bBal + ops.totalPointsB });
+  ops.itemOpsA.forEach(({ ref, exists, qty, it }) => {
+    if (exists) tx.update(ref, { qty: qty + it.qty });
+    else tx.set(ref, { name: it.name, description: it.description || '', qty: it.qty, createdAt: serverTimestamp() });
+  });
+  ops.itemOpsB.forEach(({ ref, exists, qty, it }) => {
+    if (exists) tx.update(ref, { qty: qty + it.qty });
+    else tx.set(ref, { name: it.name, description: it.description || '', qty: it.qty, createdAt: serverTimestamp() });
+  });
 }
-// 가위바위보 선택 제출(상대에게는 둘 다 낼 때까지 보이지 않음). 둘 다 내면 바로 정산
+// 가위바위보 선택 제출(상대에게는 둘 다 낼 때까지 보이지 않음). 둘 다 내면 바로 그 라운드 정산(승수만 반영, 금고에 누적)
 export async function chooseYacha(gameId, choice) {
   if (!['rock', 'paper', 'scissors'].includes(choice)) throw new Error('잘못된 선택입니다.');
   const me = uid();
@@ -1723,10 +1776,10 @@ export async function chooseYacha(gameId, choice) {
     const choiceA = choices[g.userA]; const choiceB = choices[g.userB];
     const w = rpsWinner(choiceA, choiceB);
     const winnerUid = w === 'A' ? g.userA : w === 'B' ? g.userB : null;
-    await settleYachaPotAndWrite(tx, gameRef, g, winnerUid, choiceA, choiceB);
+    settleYachaRound(tx, gameRef, g, winnerUid, choiceA, choiceB);
   });
 }
-// 다음 라운드 동의/거절 (계속하려면 둘 중 한 명의 야차권 1장이 더 필요)
+// 다음 라운드 동의/거절 (계속하려면 둘 중 한 명의 야차권 1장이 더 필요). 더 못 이어가면 그동안 쌓인 금고를 최종 정산
 export async function agreeYachaNextRound(gameId) {
   const me = uid();
   const gameRef = doc(db, 'yachaGames', gameId);
@@ -1738,11 +1791,19 @@ export async function agreeYachaNextRound(gameId) {
     const other = g.userA === me ? g.userB : g.userA;
     const roomRef = doc(db, 'chatRooms', g.roomId);
     if (!agree[other]) { tx.update(gameRef, { nextRoundAgree: agree, lastActionAt: serverTimestamp() }); return; }
-    if (g.round >= YACHA_MAX_ROUNDS) { tx.update(gameRef, { status: 'ended', lastActionAt: serverTimestamp() }); tx.update(roomRef, { yachaActive: false, activeYachaId: null }); return; }
+    if (g.round >= YACHA_MAX_ROUNDS) {
+      const ops = await readPotFinalizeOps(tx, g);
+      writePotFinalizeOps(tx, ops);
+      tx.update(gameRef, { status: 'ended', lastActionAt: serverTimestamp() });
+      tx.update(roomRef, { yachaActive: false, activeYachaId: null });
+      return;
+    }
     const aRef = doc(db, 'users', g.userA); const bRef = doc(db, 'users', g.userB);
     const [as, bs] = await Promise.all([tx.get(aRef), tx.get(bRef)]);
     const aTicket = as.data().yachaTicket || 0; const bTicket = bs.data().yachaTicket || 0;
     if (aTicket < 1 && bTicket < 1) {
+      const ops = await readPotFinalizeOps(tx, g);
+      writePotFinalizeOps(tx, ops);
       tx.update(gameRef, { status: 'ended', lastActionAt: serverTimestamp() });
       tx.update(roomRef, { yachaActive: false, activeYachaId: null });
       return;
@@ -1753,11 +1814,19 @@ export async function agreeYachaNextRound(gameId) {
     });
   });
 }
+// 종료 선택: 그동안 쌓인 금고를 최종 정산하고 끝냄
 export async function declineYachaNextRound(gameId) {
   const gameRef = doc(db, 'yachaGames', gameId);
-  const gs = await getDoc(gameRef);
-  if (!gs.exists()) return;
-  await endYachaGame(gameRef, doc(db, 'chatRooms', gs.data().roomId), 'ended');
+  await runTransaction(db, async (tx) => {
+    const gs = await tx.get(gameRef);
+    if (!gs.exists()) return;
+    const g = gs.data();
+    const roomRef = doc(db, 'chatRooms', g.roomId);
+    const ops = await readPotFinalizeOps(tx, g);
+    writePotFinalizeOps(tx, ops);
+    tx.update(gameRef, { status: 'ended', lastActionAt: serverTimestamp() });
+    tx.update(roomRef, { yachaActive: false, activeYachaId: null });
+  });
 }
 // 비활성 처리: 상대가 응답할 차례인데 설정된 시간 동안 아무 반응이 없으면 기권 처리
 export async function checkYachaTimeout(gameId) {
@@ -1777,6 +1846,8 @@ export async function checkYachaTimeout(gameId) {
     if (g.status === 'betting') {
       const bets = g.bets || {};
       if (!bets[other]?.confirmed) {
+        // 내가 확정했는데 상대가 응답 없으면: 이번 라운드(미완료)의 베팅만 나에게 환불하고, 그동안 쌓인 금고는 최종 정산
+        let refund = null;
         if (bets[me]?.confirmed) {
           const ref = doc(db, 'users', me);
           const us = await tx.get(ref);
@@ -1787,12 +1858,17 @@ export async function checkYachaTimeout(gameId) {
             const is = await tx.get(iref);
             itemReads.push({ iref, exists: is.exists(), qty: is.exists() ? is.data().qty || 0 : 0, it });
           }
-          tx.update(ref, { points: (us.data().points || 0) + (bets[me].points || 0) });
-          itemReads.forEach(({ iref, exists, qty, it }) => {
+          refund = { ref, bal: us.data().points || 0, itemReads };
+        }
+        const potOps = await readPotFinalizeOps(tx, g);
+        if (refund) {
+          tx.update(refund.ref, { points: refund.bal + (bets[me].points || 0) });
+          refund.itemReads.forEach(({ iref, exists, qty, it }) => {
             if (exists) tx.update(iref, { qty: qty + it.qty });
             else tx.set(iref, { name: it.name, description: it.description || '', qty: it.qty, createdAt: serverTimestamp() });
           });
         }
+        writePotFinalizeOps(tx, potOps);
         tx.update(gameRef, { status: 'ended', lastActionAt: serverTimestamp() });
         tx.update(roomRef, { yachaActive: false, activeYachaId: null });
         acted = true;
@@ -1802,11 +1878,13 @@ export async function checkYachaTimeout(gameId) {
     if (g.status === 'choosing' && !(g.choices || {})[other]) {
       // 상대가 안 냈으면 기권패 처리: 상대는 패배(가위바위보 선택 없음으로 간주)
       const myChoice = (g.choices || {})[me] || 'rock';
-      await settleYachaPotAndWrite(tx, gameRef, g, me, g.userA === me ? myChoice : null, g.userB === me ? myChoice : null);
+      settleYachaRound(tx, gameRef, g, me, g.userA === me ? myChoice : null, g.userB === me ? myChoice : null);
       acted = true;
       return;
     }
     if (g.status === 'result' && !(g.nextRoundAgree || {})[other]) {
+      const potOps = await readPotFinalizeOps(tx, g);
+      writePotFinalizeOps(tx, potOps);
       tx.update(gameRef, { status: 'ended', lastActionAt: serverTimestamp() });
       tx.update(roomRef, { yachaActive: false, activeYachaId: null });
       acted = true;

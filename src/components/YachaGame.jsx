@@ -11,7 +11,7 @@ const RPS_CHOICES = [
   { id: 'paper', label: '보' },
 ];
 
-function BetEditor({ myBet, items, lastBet, round, onChange, onConfirm, confirmed, disabled, err }) {
+function BetEditor({ myBet, items, onChange, onConfirm, confirmed, disabled, err }) {
   const [points, setPoints] = useState(String(myBet?.points || ''));
   const [picked, setPicked] = useState(myBet?.items || []);
   const [pickId, setPickId] = useState('');
@@ -27,7 +27,6 @@ function BetEditor({ myBet, items, lastBet, round, onChange, onConfirm, confirme
   function removeItem(id) { const next = picked.filter((p) => p.id !== id); setPicked(next); onChange(points, next); }
   return (
     <div className="yacha-bet-editor">
-      {round > 1 && <div className="yacha-note">직전 라운드({lastBet || 0}P)보다 더 걸어야 해요.</div>}
       <div className="yacha-field-row">
         <label>걸 포인트</label>
         <input className="txt-input" type="number" min="0" value={points} disabled={confirmed || disabled}
@@ -83,7 +82,22 @@ export default function YachaGame({ profile, room, game, onRefresh }) {
   }
 
   if (['declined', 'ended', 'cancelled'].includes(game.status)) {
-    return <div className="yacha-panel yacha-ended">야차가 종료되었습니다.</div>;
+    const winsA = game.wins?.[game.user_a] || 0; const winsB = game.wins?.[game.user_b] || 0;
+    const myWins = game.user_a === me ? winsA : winsB;
+    const oppWins = game.user_a === me ? winsB : winsA;
+    const potTotal = (game.pot?.points?.[game.user_a] || 0) + (game.pot?.points?.[game.user_b] || 0);
+    const played = game.status !== 'declined' && (winsA + winsB > 0 || potTotal > 0);
+    return (
+      <div className="yacha-panel yacha-ended">
+        <div className="yacha-title">야차 종료</div>
+        {played && <div className="yacha-note">나 {myWins}승 · 상대 {oppWins}승</div>}
+        {played && potTotal > 0 && (
+          myWins === oppWins
+            ? <div className="yacha-note">동률로 각자 건 것을 돌려받았습니다.</div>
+            : <div className="yacha-note">{myWins > oppWins ? `금고(${potTotal}P)를 모두 가져왔습니다.` : '금고를 모두 상대에게 넘겼습니다.'}</div>
+        )}
+      </div>
+    );
   }
 
   if (game.status === 'pending') {
@@ -99,7 +113,7 @@ export default function YachaGame({ profile, room, game, onRefresh }) {
           </>
         ) : (
           <>
-            <div className="yacha-note">상대가 야차(가위바위보)를 신청했습니다.</div>
+            <div className="yacha-note">상대가 야차를 신청했습니다.</div>
             <div className="modal-actions">
               <button className="modal-cancel" disabled={busy} onClick={() => run(() => declineYacha(game.id))}>거절</button>
               <button className="modal-confirm" disabled={busy} onClick={() => run(() => acceptYacha(game.id))}>수락</button>
@@ -113,15 +127,16 @@ export default function YachaGame({ profile, room, game, onRefresh }) {
   if (game.status === 'betting') {
     const myBet = game.bets[me];
     const oppBet = game.bets[other];
+    const potTotal = (game.pot?.points?.[game.user_a] || 0) + (game.pot?.points?.[game.user_b] || 0);
     return (
       <div className="yacha-panel">
         <div className="yacha-title">야차 · {game.round}라운드 베팅</div>
+        {potTotal > 0 && <div className="yacha-note">현재 금고 {potTotal}P (이번 라운드 베팅은 확정 후 추가로 쌓여요)</div>}
         {err && <div className="auth-error">{err}</div>}
         <div className="yacha-bet-cols">
           <div>
             <div className="yacha-col-label">내 베팅</div>
             <BetEditor myBet={myBet} items={items} confirmed={!!myBet?.confirmed} disabled={busy}
-              round={game.round} lastBet={game.last_bet?.[me]}
               onChange={(p, its) => setYachaBet(game.id, p, its).catch((e) => setErr(e.message))}
               onConfirm={() => run(() => confirmYachaBet(game.id))} err={null} />
           </div>
@@ -172,13 +187,18 @@ export default function YachaGame({ profile, room, game, onRefresh }) {
     const iWon = result.winner === me; const draw = !result.winner;
     const agreedMe = !!game.next_round_agree[me]; const agreedOther = !!game.next_round_agree[other];
     const maxed = game.round >= game.max_rounds;
+    const winsA = game.wins?.[game.user_a] || 0; const winsB = game.wins?.[game.user_b] || 0;
+    const myWins = game.user_a === me ? winsA : winsB;
+    const oppWins = game.user_a === me ? winsB : winsA;
+    const potTotal = (game.pot?.points?.[game.user_a] || 0) + (game.pot?.points?.[game.user_b] || 0);
     return (
       <div className="yacha-panel">
         <div className="yacha-title">{game.round}라운드 결과</div>
         {err && <div className="auth-error">{err}</div>}
         <div className="yacha-result-big">{draw ? '비김' : iWon ? '승리!' : '패배'}</div>
         <div className="yacha-note">나: {rpsLabel(myChoice)} · 상대: {rpsLabel(oppChoice)}</div>
-        <div className="yacha-note">{draw ? '걸었던 것이 모두 소멸했습니다.' : iWon ? '상대가 건 것까지 모두 가져왔습니다.' : '건 것을 모두 잃었습니다.'}</div>
+        <div className="yacha-note">나 {myWins}승 · 상대 {oppWins}승 (건 것은 즉시 지급되지 않고 금고{potTotal > 0 ? ` ${potTotal}P` : ''}에 쌓여요)</div>
+        <div className="yacha-note">계속하면 더 걸 수 있고, 종료 시 더 많이 이긴 쪽이 금고를 전부 가져가요. (동률이면 각자 건 만큼 돌려받아요)</div>
         {maxed ? (
           <button className="a-btn accent big" style={{ marginTop: 10, width: '100%' }} disabled={busy} onClick={() => run(() => declineYachaNextRound(game.id))}>종료 (최대 3라운드)</button>
         ) : (
