@@ -648,6 +648,16 @@ export async function fetchChatRoom(roomId) {
     yacha_active: !!d.yachaActive, active_yacha_id: d.activeYachaId || null,
   };
 }
+export function subscribeChatRoom(roomId, onChange) {
+  return onSnapshot(doc(db, 'chatRooms', roomId), (snap) => {
+    if (!snap.exists()) { onChange(null); return; }
+    const d = snap.data();
+    onChange({
+      id: roomId, post_id: d.postId, user_a: d.userA, user_b: d.userB, created_at: ts(d.createdAt), expires_at: d.expiresAt ? ts(d.expiresAt) : null,
+      yacha_active: !!d.yachaActive, active_yacha_id: d.activeYachaId || null,
+    });
+  }, () => {});
+}
 export async function fetchChatMessages(roomId) {
   const q = query(collection(db, 'chatRooms', roomId, 'messages'), orderBy('createdAt'));
   const snap = await getDocs(q);

@@ -270,7 +270,13 @@ export default function App() {
     loadChat(currentChatId);
     const unsub = api.subscribeChat(currentChatId, () => loadChat(currentChatId));
     const unsubReads = api.subscribeChatReads(currentChatId, setChatReads);
-    return () => { unsub(); unsubReads(); setChatReads({}); };
+    const unsubRoom = api.subscribeChatRoom(currentChatId, (room) => {
+      if (!room) return;
+      setChatRoom((prev) => (prev && prev.id === room.id
+        ? { ...prev, yacha_active: room.yacha_active, active_yacha_id: room.active_yacha_id, expires_at: room.expires_at }
+        : prev));
+    });
+    return () => { unsub(); unsubReads(); unsubRoom(); setChatReads({}); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile?.id, view, currentChatId]);
 
