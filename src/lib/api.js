@@ -1662,8 +1662,8 @@ export async function adminSeedYachaSkills() {
   const existing = await fetchDigRewards();
   const existingNames = new Set(existing.map((r) => r.name));
   const toAdd = [
-    { name: DITTANY_NAME, description: '먹으면 체력이 주사위만큼 회복됩니다(최대 100, 주사위 크기는 관리자가 설정). 전투 탭에서도 사용할 수 있습니다.' },
-    { name: MYRTLAP_NAME, description: '먹으면 체력이 1d5만큼 회복됩니다(최대 100). 전투 탭에서도 사용할 수 있습니다.' },
+    { name: DITTANY_NAME, description: '전투 중에 쓰면 주사위(기본 1d10, 관리자 설정)만큼, 전투 탭에서 쓰면 10 확정으로 체력이 회복됩니다(최대 100).' },
+    { name: MYRTLAP_NAME, description: '전투 중에 쓰면 1d5만큼, 전투 탭에서 쓰면 5 확정으로 체력이 회복됩니다(최대 100).' },
   ];
   Object.values(SKILL_NAMES).forEach((name) => { toAdd.push({ name, description: SKILL_DESCRIPTIONS[name] || '' }); });
   let count = 0;
@@ -2110,7 +2110,8 @@ export async function chooseYachaAction(gameId, action, itemId, subAction) {
     await postYachaChatMessage(roomId, null, text);
   }
 }
-// 전투 중이 아닐 때도 디터니/머틀랩 촉수 진액을 먹어 체력을 회복할 수 있게 함(전투 탭용). 체력은 자동으로 채워지지 않고, 이 아이템을 먹어야만 회복됩니다.
+// 전투 중이 아닐 때(상점·전투 탭)는 주사위 없이 확정값으로 회복합니다. 전투 중 아이템 사용은 resolveYachaRound에서 그대로 주사위(1d10, 1d5)로 처리됩니다.
+const STANDALONE_HEAL_FIXED = { [DITTANY_NAME]: 10, [MYRTLAP_NAME]: 5 };
 export async function useHealingItemStandalone(itemName) {
   const me = uid();
   const userRef = doc(db, 'users', me);
@@ -2125,9 +2126,7 @@ export async function useHealingItemStandalone(itemName) {
     if (!d) throw new Error(`보유한 ${itemName}이 없습니다.`);
     const hp = Number.isFinite(u.battleHp) ? u.battleHp : YACHA_BASE_HP;
     if (hp >= YACHA_BASE_HP) throw new Error('이미 체력이 가득 찼습니다.');
-    let dieSize = 5;
-    if (itemName === DITTANY_NAME) { const settings = await fetchYachaBattleSettings(); dieSize = settings.dittanyDie; }
-    healed = rollDie(dieSize);
+    healed = STANDALONE_HEAL_FIXED[itemName] ?? 10;
     const newHp = Math.min(YACHA_BASE_HP, hp + healed);
     const left = (d.data().qty || 0) - 1;
     if (left <= 0) tx.delete(d.ref); else tx.update(d.ref, { qty: left });
