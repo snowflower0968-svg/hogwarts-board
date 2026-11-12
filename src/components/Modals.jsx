@@ -133,12 +133,20 @@ export function ConfirmModal({ message, danger = true, onCancel, onConfirm, canc
 export function GiftModal({ balance, items = [], yachaTicket = 0, digTicket = 0, onCancel, onSendPoints, onSendItem, onSendTicket }) {
   const [mode, setMode] = useState('points');
   const [amount, setAmount] = useState('');
-  const [itemId, setItemId] = useState('');
-  const [qty, setQty] = useState('1');
+  const [picked, setPicked] = useState({}); // { [itemId]: qty(string) }
   const [ticketQty, setTicketQty] = useState('1');
   const [error, setError] = useState('');
-  const selected = items.find((i) => i.id === itemId);
-  const { overlayClick, guard } = useCloseGuard(!!amount || !!itemId, onCancel);
+  const pickedIds = Object.keys(picked).filter((id) => picked[id] !== '' && picked[id] != null);
+  const { overlayClick, guard } = useCloseGuard(!!amount || pickedIds.length > 0, onCancel);
+
+  function toggleItem(it) {
+    setPicked((p) => {
+      const next = { ...p };
+      if (next[it.id] != null) delete next[it.id]; else next[it.id] = '1';
+      return next;
+    });
+  }
+  function setItemQty(id, v) { setPicked((p) => ({ ...p, [id]: v })); }
 
   async function submit(e) {
     e.preventDefault();
@@ -148,10 +156,15 @@ export function GiftModal({ balance, items = [], yachaTicket = 0, digTicket = 0,
         if (!amt || amt <= 0) { setError('보낼 포인트를 입력하세요.'); return; }
         await onSendPoints(amt);
       } else if (mode === 'item') {
-        const q = parseInt(qty, 10);
-        if (!selected) { setError('보낼 소지품을 선택하세요.'); return; }
-        if (!q || q <= 0 || q > selected.qty) { setError('수량을 확인하세요.'); return; }
-        await onSendItem(selected.id, q);
+        if (pickedIds.length === 0) { setError('보낼 소지품을 선택하세요.'); return; }
+        const picks = [];
+        for (const id of pickedIds) {
+          const it = items.find((i) => i.id === id);
+          const q = parseInt(picked[id], 10);
+          if (!it || !q || q <= 0 || q > it.qty) { setError(`${it ? it.name : '소지품'}의 수량을 확인하세요.`); return; }
+          picks.push({ id, qty: q });
+        }
+        await onSendItem(picks);
       } else {
         const q = parseInt(ticketQty, 10);
         const have = mode === 'yacha' ? yachaTicket : digTicket;
@@ -180,13 +193,22 @@ export function GiftModal({ balance, items = [], yachaTicket = 0, digTicket = 0,
             items.length === 0 ? (
               <div className="empty-state" style={{ padding: '20px 0' }}>보유한 소지품이 없습니다.</div>
             ) : (
-              <>
-                <select value={itemId} onChange={(e) => { setItemId(e.target.value); setQty('1'); }}>
-                  <option value="">소지품 선택</option>
-                  {items.map((i) => <option key={i.id} value={i.id}>{i.name} (보유 {i.qty})</option>)}
-                </select>
-                <input type="number" min="1" max={selected ? selected.qty : undefined} value={qty} onChange={(e) => setQty(e.target.value)} placeholder="수량" />
-              </>
+              <div className="gift-item-list">
+                {items.map((it) => {
+                  const on = picked[it.id] != null;
+                  return (
+                    <div key={it.id} className={`gift-item-row${on ? ' on' : ''}`}>
+                      <label className="gift-item-check">
+                        <input type="checkbox" checked={on} onChange={() => toggleItem(it)} />
+                        <span>{it.name} (보유 {it.qty})</span>
+                      </label>
+                      {on && (
+                        <input type="number" min="1" max={it.qty} value={picked[it.id]} onChange={(e) => setItemQty(it.id, e.target.value)} style={{ width: 64 }} />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             )
           ) : (
             <input type="number" min="1" max={mode === 'yacha' ? yachaTicket : digTicket} value={ticketQty} onChange={(e) => setTicketQty(e.target.value)}
@@ -278,27 +300,35 @@ export function IdentityModal({ userId, onClose, onOpenPost }) {
             <div className="row-sub">최근 활동: {lastActivity ? fmtTime(lastActivity) : '없음'}</div>
             <div className="row-sub">도박 참여: {gambleCount}회</div>
             <div className="field-label">소지품 ({invItems.length})</div>
-            {invItems.length === 0 ? <div className="row-sub">없음</div> : invItems.map((it) => (
-              <div key={it.id} className="row-sub" style={{ color: 'var(--text)' }}>{it.name}{it.qty > 1 ? ` x${it.qty}` : ''}{it.description ? ` · ${it.description}` : ''}</div>
-            ))}
+            <div className="modal-sublist">
+              {invItems.length === 0 ? <div className="row-sub">없음</div> : invItems.map((it) => (
+                <div key={it.id} className="row-sub" style={{ color: 'var(--text)' }}>{it.name}{it.qty > 1 ? ` x${it.qty}` : ''}{it.description ? ` · ${it.description}` : ''}</div>
+              ))}
+            </div>
             <div className="field-label">개인 기재 ({notes.length})</div>
-            {notes.length === 0 ? <div className="row-sub">없음</div> : notes.map((n) => (
-              <div key={n.id} className="row-sub" style={{ color: 'var(--text)' }}>{n.name}{n.qty > 1 ? ` x${n.qty}` : ''}{n.note ? ` · ${n.note}` : ''}</div>
-            ))}
+            <div className="modal-sublist">
+              {notes.length === 0 ? <div className="row-sub">없음</div> : notes.map((n) => (
+                <div key={n.id} className="row-sub" style={{ color: 'var(--text)' }}>{n.name}{n.qty > 1 ? ` x${n.qty}` : ''}{n.note ? ` · ${n.note}` : ''}</div>
+              ))}
+            </div>
             <div className="field-label">작성 글 ({posts.length})</div>
-            {posts.length === 0 ? <div className="row-sub">없음</div> : posts.map((p) => (
-              <div key={p.id} className="list-row" style={{ padding: '8px 0' }}>
-                <span className="row-title" onClick={() => { onClose(); onOpenPost(p.id); }}>{p.title}</span>
-                <div className="row-sub">{boardName(p.board_id)} · {fmtTime(p.created_at)}</div>
-              </div>
-            ))}
+            <div className="modal-sublist">
+              {posts.length === 0 ? <div className="row-sub">없음</div> : posts.map((p) => (
+                <div key={p.id} className="list-row" style={{ padding: '8px 0' }}>
+                  <span className="row-title" onClick={() => { onClose(); onOpenPost(p.id); }}>{p.title}</span>
+                  <div className="row-sub">{boardName(p.board_id)} · {fmtTime(p.created_at)}</div>
+                </div>
+              ))}
+            </div>
             <div className="field-label">작성 댓글 ({comments.length})</div>
-            {comments.length === 0 ? <div className="row-sub">없음</div> : comments.map((c) => (
-              <div key={c.id} className="list-row" style={{ padding: '8px 0' }}>
-                <span className="row-title" onClick={() => { onClose(); onOpenPost(c.post_id); }}>{c.posts?.title || '(삭제된 글)'}</span>
-                <div className="row-sub">"{c.content.slice(0, 40)}" · {fmtTime(c.created_at)}</div>
-              </div>
-            ))}
+            <div className="modal-sublist">
+              {comments.length === 0 ? <div className="row-sub">없음</div> : comments.map((c) => (
+                <div key={c.id} className="list-row" style={{ padding: '8px 0' }}>
+                  <span className="row-title" onClick={() => { onClose(); onOpenPost(c.post_id); }}>{c.posts?.title || '(삭제된 글)'}</span>
+                  <div className="row-sub">"{c.content.slice(0, 40)}" · {fmtTime(c.created_at)}</div>
+                </div>
+              ))}
+            </div>
           </>
         )}
         <div className="modal-actions">

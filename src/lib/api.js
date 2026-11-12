@@ -1,7 +1,7 @@
 import {
   collection, collectionGroup, doc, getDoc, getDocs, addDoc, setDoc, updateDoc, deleteDoc,
   query, where, orderBy, limit, onSnapshot, writeBatch, getCountFromServer,
-  serverTimestamp, increment, runTransaction, Timestamp,
+  serverTimestamp, increment, runTransaction, Timestamp, deleteField,
 } from 'firebase/firestore';
 import {
   createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut as fbSignOut,
@@ -23,7 +23,7 @@ export const FACTIONS = [
 export function factionOf(house) { return house ? house.replace(/^post_/, '') : null; }
 export const HOUSES = [
   ...FACTIONS.map((f) => ({ id: f.id, name: f.name, era: 'pre' })),
-  ...FACTIONS.map((f) => ({ id: `post_${f.id}`, name: `${f.name} (회귀 후)`, era: 'post' })),
+  ...FACTIONS.map((f) => ({ id: `post_${f.id}`, name: f.name, era: 'post' })),
 ];
 // 회귀 전/후 판별 (post_ 로 시작하면 회귀 후)
 export function houseEra(house) { return house && house.startsWith('post_') ? 'post' : 'pre'; }
@@ -31,7 +31,7 @@ export const BOARDS = [
   { id: 'free', name: '자유게시판', house: null, era: 'pre' },
   { id: 'free_post', name: '자유게시판', house: null, era: 'post' },
   ...FACTIONS.map((f) => ({ id: f.id, name: f.name, house: f.id, era: 'pre' })),
-  ...FACTIONS.map((f) => ({ id: `post_${f.id}`, name: `${f.name} (회귀 후)`, house: `post_${f.id}`, era: 'post' })),
+  ...FACTIONS.map((f) => ({ id: `post_${f.id}`, name: f.name, house: `post_${f.id}`, era: 'post' })),
   { id: 'anon', name: '익명방', house: null, era: null },
 ];
 const BOARD_HOUSE = Object.fromEntries(BOARDS.map((b) => [b.id, b.house]));
@@ -775,6 +775,8 @@ export async function acceptGift(roomId, msgId) {
       tx.update(msgRef, { status: 'accepted' });
       tx.update(userRef, { [field]: (us.data()[field] || 0) + m.qty });
     });
+    const [from, to] = await Promise.all([fetchProfileById(m.senderId), fetchProfileById(uid())]);
+    await logItem({ action: 'transfer', userId: m.senderId, userName: from?.character_name || '', targetUserId: uid(), targetName: to?.character_name || '', itemName: TICKET_LABEL[m.ticketType] || '티켓', itemDescription: '', qty: m.qty });
     return;
   }
   const userRef = doc(db, 'users', uid());
@@ -976,6 +978,13 @@ export async function fetchAllCommentsAdmin() {
 export async function approveUser(id) { await updateDoc(doc(db, 'users', id), { approved: true, rejected: false }); }
 export async function rejectUser(id) { await updateDoc(doc(db, 'users', id), { rejected: true, approved: false }); }
 export async function setUserHouse(id, house) { await updateDoc(doc(db, 'users', id), { house: house || null }); }
+// 여러 캐릭터를 한 번에 같은 소속으로 바꿔요(예: 선택한 캐릭터들을 전부 "회귀 후"로 전환).
+export async function adminBulkSetHouse(userIds, house) {
+  const batch = writeBatch(db);
+  userIds.forEach((id) => { batch.update(doc(db, 'users', id), { house: house || null }); });
+  await batch.commit();
+  return userIds.length;
+}
 export async function toggleAdminRole(id) {
   const ref = doc(db, 'users', id);
   const snap = await getDoc(ref);
@@ -1591,6 +1600,9 @@ export const SKILL_NAMES = {
   FORCE_DEFEND: '스킬6', HEAL_D20: '스킬7', ATK_D20_FIXED: '스킬8', GUARD_HALF: '스킬9', COPY_BUFF: '스킬10',
   HEAL_D30: '스킬11', GUARANTEE_NEXT: '스킬12', ADVANTAGE: '스킬13', SACRIFICE_ATK: '스킬14', DEFER_DMG: '스킬15',
   HEAL_NULLIFY: '스킬16', STRENGTH_POTION: '스킬17', DEATH_WARD: '스킬18', SWAP_HP: '스킬19',
+  COND_HEAL: '스킬20', DOUBLE_ATK: '스킬21', STEAL_SKILL: '스킬22', MIRROR: '스킬23', CHIP_ARMOR: '스킬24',
+  DOT_HEAL: '스킬25', ALL_IN: '스킬26', RETRY_PICK: '스킬27', COND_DMG: '스킬28', HEAL_BUFF_3R: '스킬29',
+  DEF_BUFF_3R: '스킬30', NULLIFY_THEN_GUARANTEE: '스킬31',
 };
 export const SKILL_DESCRIPTIONS = {
   [SKILL_NAMES.NULLIFY]: '해당 라운드 들어오는 모든 피해를 상쇄합니다.',
@@ -1612,16 +1624,33 @@ export const SKILL_DESCRIPTIONS = {
   [SKILL_NAMES.STRENGTH_POTION]: '체력 10을 즉시 소모하고 이후 공격 피해가 +5 됩니다(전투 끝까지 영구).',
   [SKILL_NAMES.DEATH_WARD]: '사망 시 1회 한정으로 체력 1로 부활합니다.',
   [SKILL_NAMES.SWAP_HP]: '상대와 자신의 체력을 서로 맞바꿉니다.',
+  [SKILL_NAMES.COND_HEAL]: '체력이 50 이하일 때만 사용 가능. 1d20+10 고정 회복(성공률 없음).',
+  [SKILL_NAMES.DOUBLE_ATK]: '이번 라운드 공격을 2회 합니다(각각 1d20, 상대 방어로 각각 차감).',
+  [SKILL_NAMES.STEAL_SKILL]: '사용 시 상대가 보유한 스킬 아이템 1개를 무작위로 소모시킵니다.',
+  [SKILL_NAMES.MIRROR]: '이번 라운드 자신이 고른 공격/방어/회복을 상대도 그대로 하게 합니다.',
+  [SKILL_NAMES.CHIP_ARMOR]: '이번 라운드 들어오는 피해 중 10을 넘는 부분만 상쇄합니다(약한 공격엔 효과 없음).',
+  [SKILL_NAMES.DOT_HEAL]: '사용한 라운드부터 2라운드간 매 라운드 1d6 고정 회복합니다.',
+  [SKILL_NAMES.ALL_IN]: '자신의 체력을 1만 남기고, 희생한 체력만큼 상대에게 고정 피해를 입힙니다.',
+  [SKILL_NAMES.RETRY_PICK]: '이미 고른 행동을, 상대가 고르기 전까지 상대에게 들키지 않고 다시 고를 수 있게 합니다.',
+  [SKILL_NAMES.COND_DMG]: '상대 체력이 자신보다 높을 때만 사용 가능. 체력 차이의 절반만큼 고정 피해를 입힙니다.',
+  [SKILL_NAMES.HEAL_BUFF_3R]: '사용한 다음 라운드부터 3라운드간 회복 성공률이 +20%p 됩니다.',
+  [SKILL_NAMES.DEF_BUFF_3R]: '사용한 다음 라운드부터 3라운드간 방어 성공률이 +20%p 됩니다.',
+  [SKILL_NAMES.NULLIFY_THEN_GUARANTEE]: '이번 라운드 받는 피해를 없애고, 다음 라운드 자신의 행동이 반드시 성공합니다.',
 };
 // 사용할 때 "공격/회복 중 어느 쪽에 적용할지" 추가 선택이 필요한 스킬
-export const SKILL_NEEDS_SUBACTION = [SKILL_NAMES.ADVANTAGE];
+export const SKILL_NEEDS_SUBACTION = [SKILL_NAMES.ADVANTAGE, SKILL_NAMES.MIRROR];
+// 사용 시 전투 중인 체력 조건을 만족해야 하는 스킬: [itemName, 검사함수(myHp, oppHp) => boolean, 실패 메시지]
+export const SKILL_HP_CONDITIONS = [
+  [SKILL_NAMES.COND_HEAL, (my) => my <= 50, '체력이 50 이하일 때만 사용할 수 있습니다.'],
+  [SKILL_NAMES.COND_DMG, (my, opp) => opp > my, '상대 체력이 자신보다 높을 때만 사용할 수 있습니다.'],
+];
 export const NULLIFY_SKILL_NAME = SKILL_NAMES.NULLIFY; // 하위 호환용 별칭
 
 // 디터니 + 스킬 1~19를 간이 조사 보상 목록에 한 번에 등록(이미 있는 이름은 건너뜀). 확률(weight)은 기본 10으로 두고 관리자가 조정.
 export async function adminSeedYachaSkills() {
   const existing = await fetchDigRewards();
   const existingNames = new Set(existing.map((r) => r.name));
-  const toAdd = [{ name: DITTANY_NAME, description: '먹으면 체력이 10 오릅니다(최대 100). 전투 탭에서도 사용할 수 있어요.' }];
+  const toAdd = [{ name: DITTANY_NAME, description: '먹으면 체력이 주사위만큼 회복됩니다(최대 100, 주사위 크기는 관리자가 설정). 전투 탭에서도 사용할 수 있어요.' }];
   Object.values(SKILL_NAMES).forEach((name) => { toAdd.push({ name, description: SKILL_DESCRIPTIONS[name] || '' }); });
   let count = 0;
   for (const item of toAdd) {
@@ -1643,7 +1672,7 @@ export async function saveYachaTimeoutMs(minutesRaw) {
   await setDoc(doc(db, 'settings', 'yacha'), { timeoutMs: Math.round(min * 60 * 1000) }, { merge: true });
   return min;
 }
-const DEFAULT_YACHA_BATTLE = { atkChance: 50, defChance: 50, healChance: 50, dieMax: 20 };
+const DEFAULT_YACHA_BATTLE = { atkChance: 70, defChance: 70, healChance: 70, dieMax: 20, dittanyDie: 10 };
 export async function fetchYachaBattleSettings() {
   try {
     const snap = await getDoc(doc(db, 'settings', 'yacha'));
@@ -1654,14 +1683,16 @@ export async function fetchYachaBattleSettings() {
       defChance: Number.isFinite(d.defChance) ? d.defChance : DEFAULT_YACHA_BATTLE.defChance,
       healChance: Number.isFinite(d.healChance) ? d.healChance : DEFAULT_YACHA_BATTLE.healChance,
       dieMax: Number.isFinite(d.dieMax) && d.dieMax > 0 ? d.dieMax : DEFAULT_YACHA_BATTLE.dieMax,
+      dittanyDie: Number.isFinite(d.dittanyDie) && d.dittanyDie > 0 ? d.dittanyDie : DEFAULT_YACHA_BATTLE.dittanyDie,
     };
   } catch (e) { return { ...DEFAULT_YACHA_BATTLE }; }
 }
-export async function saveYachaBattleSettings({ atkChance, defChance, healChance, dieMax }) {
-  const a = Number(atkChance); const d = Number(defChance); const h = Number(healChance); const die = Number(dieMax);
+export async function saveYachaBattleSettings({ atkChance, defChance, healChance, dieMax, dittanyDie }) {
+  const a = Number(atkChance); const d = Number(defChance); const h = Number(healChance); const die = Number(dieMax); const dd = Number(dittanyDie);
   if (![a, d, h].every((v) => v >= 0 && v <= 100)) throw new Error('확률은 0~100 사이로 입력하세요.');
   if (!(die >= 1)) throw new Error('주사위 최대값은 1 이상이어야 합니다.');
-  await setDoc(doc(db, 'settings', 'yacha'), { atkChance: a, defChance: d, healChance: h, dieMax: Math.round(die) }, { merge: true });
+  if (!(dd >= 1)) throw new Error('디터니 회복 주사위는 1 이상이어야 합니다.');
+  await setDoc(doc(db, 'settings', 'yacha'), { atkChance: a, defChance: d, healChance: h, dieMax: Math.round(die), dittanyDie: Math.round(dd) }, { merge: true });
 }
 // 기숙사(진영)별 전투 점수 합계 — 관리자 화면에서 사용
 export function aggregateBattlePointsByFaction(users) {
@@ -1772,76 +1803,123 @@ export async function acceptYacha(gameId) {
 }
 function rollDie(dieMax) { return 1 + Math.floor(Math.random() * dieMax); }
 function rollSuccess(chancePercent) { return Math.random() * 100 < chancePercent; }
-function actionLabelText(act) {
-  if (!act) return '';
-  if (act.action === 'item') return act.itemName || '아이템 사용';
-  return YACHA_ACTION_LABEL[act.action] || act.action;
+function defaultYachaBuff() {
+  return {
+    halfDmgRounds: 0, atkBonus: 0, deathWard: false, guaranteedNext: false, pendingDamage: 0,
+    healDotRounds: 0, healBonusRounds: 0, defBonusRounds: 0,
+  };
 }
-function defaultYachaBuff() { return { halfDmgRounds: 0, atkBonus: 0, deathWard: false, guaranteedNext: false, pendingDamage: 0 }; }
+function actionNote(act, skill, roll) {
+  if (!act) return '';
+  if (act.action === 'attack') return roll.atkOk ? `공격(성공/${roll.atk})` : '공격(실패)';
+  if (act.action === 'defend') return roll.defOk ? `방어(성공/${roll.def})` : '방어(실패)';
+  if (act.action === 'heal') return roll.healOk ? `회복(성공/${roll.heal})` : '회복(실패)';
+  if (skill === DITTANY_NAME) return `${DITTANY_NAME}(회복${roll.heal})`;
+  const S = SKILL_NAMES;
+  switch (skill) {
+    case S.NULLIFY: case S.NULLIFY_THEN_GUARANTEE: return `${skill}(상쇄)`;
+    case S.ATK_D20_FIXED: case S.ATK_SURE: case S.COND_DMG: case S.ALL_IN: return `${skill}(성공/${roll.atk})`;
+    case S.DEF_SURE: return `${skill}(성공/${roll.def})`;
+    case S.HEAL_D20: case S.HEAL_D30: case S.COND_HEAL: return `${skill}(회복${roll.heal})`;
+    case S.DOT_HEAL: return `${skill}(회복${roll.heal})`;
+    case S.LIFESTEAL: return roll.atkOk ? `${skill}(성공/${roll.atk})` : `${skill}(실패)`;
+    case S.SACRIFICE_ATK: return `${skill}(피해${roll.atk}/자해10)`;
+    case S.DOUBLE_ATK: return `${skill}(${roll.atkOk ? `성공/${roll.atk}` : '실패'}·${roll.atkOk2 ? `성공/${roll.atk2}` : '실패'})`;
+    case S.COIN: return roll.healOk ? `${skill}(회복${roll.heal})` : `${skill}(자해${roll.selfDmg})`;
+    case S.ADVANTAGE: case S.MIRROR:
+      if (act.subAction === 'attack') return roll.atkOk ? `${skill}(성공/${roll.atk})` : `${skill}(실패)`;
+      if (act.subAction === 'defend') return roll.defOk ? `${skill}(성공/${roll.def})` : `${skill}(실패)`;
+      return roll.healOk ? `${skill}(회복${roll.heal})` : `${skill}(실패)`;
+    default: return `${skill}(발동)`;
+  }
+}
 // 한 라운드를 해석하는 순수 함수(파이어스토어 접근 없음). 트랜잭션에서 필요한 읽기가 끝난 뒤 호출.
-// actA/actB: {action, itemId, itemName, subAction} / hp,buffsIn: {[uid]: ...} / settings: {dieMax, atkChance, defChance, healChance}
+// actA/actB: {action, itemId, itemName, subAction} / hp,buffsIn: {[uid]: ...} / settings: {dieMax, atkChance, defChance, healChance, dittanyDie}
 function resolveYachaRound({ userA, userB, actions, hp, buffsIn, settings }) {
-  const { dieMax, atkChance, defChance, healChance } = settings;
+  const { dieMax, atkChance, defChance, healChance, dittanyDie } = settings;
   const S = SKILL_NAMES;
   const actA = actions[userA]; const actB = actions[userB];
   const skillA = actA?.action === 'item' ? actA.itemName : null;
   const skillB = actB?.action === 'item' ? actB.itemName : null;
   const bA = { ...defaultYachaBuff(), ...(buffsIn[userA] || {}) };
   const bB = { ...defaultYachaBuff(), ...(buffsIn[userB] || {}) };
+  const hpStartA = hp[userA] ?? YACHA_BASE_HP; const hpStartB = hp[userB] ?? YACHA_BASE_HP;
 
-  // "이번 라운드 상대 행동을 강제로 방어로 고정" — 상대가 일반 행동(공격/방어/회복)일 때만 적용, 스킬 사용은 그대로 둠
+  // "이번 라운드 상대 행동을 강제로 방어로 고정" / "상대도 그대로 하게" — 상대가 일반 행동일 때만 적용, 스킬 사용은 그대로 둠
   let effA = actA?.action; let effB = actB?.action;
   if (skillB === S.FORCE_DEFEND && effA !== 'item') effA = 'defend';
   if (skillA === S.FORCE_DEFEND && effB !== 'item') effB = 'defend';
+  if (skillA === S.MIRROR && actA.subAction && effB !== 'item') effB = actA.subAction;
+  if (skillB === S.MIRROR && actB.subAction && effA !== 'item') effA = actB.subAction;
 
-  function rollFor(act, eff, skill, buff) {
-    const r = { atkOk: false, atk: 0, defOk: false, def: 0, healOk: false, heal: 0, selfDmg: 0 };
+  function rollFor(act, eff, skill, buff, selfHp) {
+    const r = { atkOk: false, atk: 0, atkOk2: false, atk2: 0, defOk: false, def: 0, healOk: false, heal: 0, selfDmg: 0 };
     const guaranteed = buff.guaranteedNext;
+    const healChanceEff = healChance + (buff.healBonusRounds > 0 ? 20 : 0);
+    const defChanceEff = defChance + (buff.defBonusRounds > 0 ? 20 : 0);
     if (skill === S.ATK_SURE) { r.atkOk = true; r.atk = rollDie(dieMax) + buff.atkBonus; }
     else if (skill === S.ATK_D20_FIXED) { r.atkOk = true; r.atk = rollDie(20); }
     else if (skill === S.SACRIFICE_ATK) { r.atkOk = true; r.atk = rollDie(20) + 5; r.selfDmg += 10; }
+    else if (skill === S.COND_DMG) { r.atkOk = true; r.atk = Math.floor(Math.abs((hp[eff === 'opp' ? 0 : 0])) * 0); } // placeholder, replaced below
+    else if (skill === S.ALL_IN) { const cost = Math.max(0, selfHp - 1); r.atkOk = true; r.atk = cost; r.selfDmg += cost; }
     else if (skill === S.LIFESTEAL) { r.atkOk = guaranteed || rollSuccess(atkChance); if (r.atkOk) r.atk = rollDie(dieMax) + buff.atkBonus; }
+    else if (skill === S.DOUBLE_ATK) {
+      r.atkOk = guaranteed || rollSuccess(atkChance); if (r.atkOk) r.atk = rollDie(dieMax) + buff.atkBonus;
+      r.atkOk2 = guaranteed || rollSuccess(atkChance); if (r.atkOk2) r.atk2 = rollDie(dieMax) + buff.atkBonus;
+    } else if (skill === S.ADVANTAGE && act.subAction === 'attack') { r.atkOk = guaranteed || rollSuccess(atkChance); if (r.atkOk) r.atk = Math.max(rollDie(dieMax), rollDie(dieMax)) + buff.atkBonus; }
+    else if (skill === S.MIRROR && act.subAction === 'attack') { r.atkOk = guaranteed || rollSuccess(atkChance); if (r.atkOk) r.atk = rollDie(dieMax) + buff.atkBonus; }
     else if (eff === 'attack') { r.atkOk = guaranteed || rollSuccess(atkChance); if (r.atkOk) r.atk = rollDie(dieMax) + buff.atkBonus; }
 
     if (skill === S.DEF_SURE) { r.defOk = true; r.def = rollDie(dieMax); }
-    else if (eff === 'defend') { r.defOk = guaranteed || rollSuccess(defChance); if (r.defOk) r.def = rollDie(dieMax); }
+    else if (skill === S.ADVANTAGE && act.subAction === 'defend') { r.defOk = guaranteed || rollSuccess(defChanceEff); if (r.defOk) r.def = Math.max(rollDie(dieMax), rollDie(dieMax)); }
+    else if (skill === S.MIRROR && act.subAction === 'defend') { r.defOk = guaranteed || rollSuccess(defChanceEff); if (r.defOk) r.def = rollDie(dieMax); }
+    else if (eff === 'defend') { r.defOk = guaranteed || rollSuccess(defChanceEff); if (r.defOk) r.def = rollDie(dieMax); }
 
     if (skill === S.HEAL_D20) { r.healOk = true; r.heal = rollDie(20); }
     else if (skill === S.HEAL_D30) { r.healOk = true; r.heal = rollDie(30); }
-    else if (eff === 'heal') { r.healOk = guaranteed || rollSuccess(healChance); if (r.healOk) r.heal = rollDie(dieMax); }
+    else if (skill === S.COND_HEAL) { r.healOk = true; r.heal = rollDie(20) + 10; }
+    else if (skill === S.ADVANTAGE && act.subAction === 'heal') { r.healOk = guaranteed || rollSuccess(healChanceEff); if (r.healOk) r.heal = Math.max(rollDie(dieMax), rollDie(dieMax)); }
+    else if (skill === S.MIRROR && act.subAction === 'heal') { r.healOk = guaranteed || rollSuccess(healChanceEff); if (r.healOk) r.heal = rollDie(dieMax); }
+    else if (eff === 'heal') { r.healOk = guaranteed || rollSuccess(healChanceEff); if (r.healOk) r.heal = rollDie(dieMax); }
 
-    if (skill === S.ADVANTAGE && act.subAction === 'attack') { r.atkOk = guaranteed || rollSuccess(atkChance); if (r.atkOk) r.atk = Math.max(rollDie(dieMax), rollDie(dieMax)) + buff.atkBonus; }
-    if (skill === S.ADVANTAGE && act.subAction === 'heal') { r.healOk = guaranteed || rollSuccess(healChance); if (r.healOk) r.heal = Math.max(rollDie(dieMax), rollDie(dieMax)); }
     if (skill === S.COIN) { if (Math.random() < 0.5) { r.healOk = true; r.heal = rollDie(20); } else { r.selfDmg += rollDie(20); } }
+    if (skill === DITTANY_NAME) { r.healOk = true; r.heal = rollDie(dittanyDie); }
+    const dotActive = buff.healDotRounds > 0 || skill === S.DOT_HEAL;
+    if (dotActive) { r.healOk = true; r.heal += rollDie(6); }
     return r;
   }
-  const rollA = rollFor(actA, effA, skillA, bA);
-  const rollB = rollFor(actB, effB, skillB, bB);
+  const rollA = rollFor(actA, effA, skillA, bA, hpStartA);
+  const rollB = rollFor(actB, effB, skillB, bB, hpStartB);
+  // 체력차 기반 고정 피해(스킬28)는 상대 쪽 수치가 필요해서 역할 계산 뒤 다시 채움
+  if (skillA === S.COND_DMG) { rollA.atkOk = true; rollA.atk = Math.floor(Math.max(0, hpStartB - hpStartA) / 2); }
+  if (skillB === S.COND_DMG) { rollB.atkOk = true; rollB.atk = Math.floor(Math.max(0, hpStartA - hpStartB) / 2); }
   if (skillA === S.HEAL_NULLIFY) rollB.healOk = false;
   if (skillB === S.HEAL_NULLIFY) rollA.healOk = false;
 
-  let dmgToA = Math.max(0, rollB.atk - rollA.def);
-  let dmgToB = Math.max(0, rollA.atk - rollB.def);
-  if (skillA === S.NULLIFY) dmgToA = 0;
-  if (skillB === S.NULLIFY) dmgToB = 0;
+  let dmgToA = Math.max(0, rollB.atk - rollA.def) + Math.max(0, (rollB.atk2 || 0) - rollA.def);
+  let dmgToB = Math.max(0, rollA.atk - rollB.def) + Math.max(0, (rollA.atk2 || 0) - rollB.def);
+  if (skillA === S.NULLIFY || skillA === S.NULLIFY_THEN_GUARANTEE) dmgToA = 0;
+  if (skillB === S.NULLIFY || skillB === S.NULLIFY_THEN_GUARANTEE) dmgToB = 0;
   const halfActiveA = bA.halfDmgRounds > 0 || skillA === S.GUARD_HALF;
   const halfActiveB = bB.halfDmgRounds > 0 || skillB === S.GUARD_HALF;
   if (halfActiveA) dmgToA = Math.floor(dmgToA / 2);
   if (halfActiveB) dmgToB = Math.floor(dmgToB / 2);
+  if (skillA === S.CHIP_ARMOR && dmgToA > 10) dmgToA = 10;
+  if (skillB === S.CHIP_ARMOR && dmgToB > 10) dmgToB = 10;
   let deferOutA = 0; let deferOutB = 0;
   if (skillA === S.DEFER_DMG) { deferOutA = dmgToA; dmgToA = 0; }
   if (skillB === S.DEFER_DMG) { deferOutB = dmgToB; dmgToB = 0; }
   dmgToA += bA.pendingDamage || 0;
   dmgToB += bB.pendingDamage || 0;
 
-  let hpA2 = (hp[userA] ?? YACHA_BASE_HP) - dmgToA - (rollA.selfDmg || 0);
-  let hpB2 = (hp[userB] ?? YACHA_BASE_HP) - dmgToB - (rollB.selfDmg || 0);
+  let hpA2 = hpStartA - dmgToA - (rollA.selfDmg || 0);
+  let hpB2 = hpStartB - dmgToB - (rollB.selfDmg || 0);
   if (hpA2 > 0 && rollA.healOk) hpA2 = Math.min(YACHA_BASE_HP, hpA2 + rollA.heal);
   if (hpB2 > 0 && rollB.healOk) hpB2 = Math.min(YACHA_BASE_HP, hpB2 + rollB.heal);
   if (hpA2 > 0 && skillA === S.LIFESTEAL && rollA.atkOk) hpA2 = Math.min(YACHA_BASE_HP, hpA2 + Math.floor(dmgToB / 2));
   if (hpB2 > 0 && skillB === S.LIFESTEAL && rollB.atkOk) hpB2 = Math.min(YACHA_BASE_HP, hpB2 + Math.floor(dmgToA / 2));
-  if (hpA2 > 0 && skillA === DITTANY_NAME) hpA2 = Math.min(YACHA_BASE_HP, hpA2 + 10);
-  if (hpB2 > 0 && skillB === DITTANY_NAME) hpB2 = Math.min(YACHA_BASE_HP, hpB2 + 10);
+  if (skillA === S.ALL_IN) hpA2 = Math.min(hpA2, 1);
+  if (skillB === S.ALL_IN) hpB2 = Math.min(hpB2, 1);
   if (skillA === S.SWAP_HP || skillB === S.SWAP_HP) { const t = hpA2; hpA2 = hpB2; hpB2 = t; }
   hpA2 = Math.max(0, hpA2); hpB2 = Math.max(0, hpB2);
 
@@ -1849,10 +1927,16 @@ function resolveYachaRound({ userA, userB, actions, hp, buffsIn, settings }) {
   let newAtkBonusB = bB.atkBonus + (skillB === S.STRENGTH_POTION ? 5 : 0);
   let newHalfA = skillA === S.GUARD_HALF ? 1 : Math.max(0, bA.halfDmgRounds - (bA.halfDmgRounds > 0 ? 1 : 0));
   let newHalfB = skillB === S.GUARD_HALF ? 1 : Math.max(0, bB.halfDmgRounds - (bB.halfDmgRounds > 0 ? 1 : 0));
-  let newGuaranteedA = skillA === S.GUARANTEE_NEXT;
-  let newGuaranteedB = skillB === S.GUARANTEE_NEXT;
+  let newGuaranteedA = skillA === S.GUARANTEE_NEXT || skillA === S.NULLIFY_THEN_GUARANTEE;
+  let newGuaranteedB = skillB === S.GUARANTEE_NEXT || skillB === S.NULLIFY_THEN_GUARANTEE;
   let newDeathWardA = skillA === S.DEATH_WARD ? true : bA.deathWard;
   let newDeathWardB = skillB === S.DEATH_WARD ? true : bB.deathWard;
+  let newDotA = skillA === S.DOT_HEAL ? 1 : Math.max(0, bA.healDotRounds - (bA.healDotRounds > 0 ? 1 : 0));
+  let newDotB = skillB === S.DOT_HEAL ? 1 : Math.max(0, bB.healDotRounds - (bB.healDotRounds > 0 ? 1 : 0));
+  let newHealBuffA = skillA === S.HEAL_BUFF_3R ? 3 : Math.max(0, bA.healBonusRounds - (bA.healBonusRounds > 0 ? 1 : 0));
+  let newHealBuffB = skillB === S.HEAL_BUFF_3R ? 3 : Math.max(0, bB.healBonusRounds - (bB.healBonusRounds > 0 ? 1 : 0));
+  let newDefBuffA = skillA === S.DEF_BUFF_3R ? 3 : Math.max(0, bA.defBonusRounds - (bA.defBonusRounds > 0 ? 1 : 0));
+  let newDefBuffB = skillB === S.DEF_BUFF_3R ? 3 : Math.max(0, bB.defBonusRounds - (bB.defBonusRounds > 0 ? 1 : 0));
   let deadA = hpA2 <= 0; let deadB = hpB2 <= 0;
   if (deadA && newDeathWardA) { hpA2 = 1; deadA = false; newDeathWardA = false; }
   if (deadB && newDeathWardB) { hpB2 = 1; deadB = false; newDeathWardB = false; }
@@ -1866,9 +1950,16 @@ function resolveYachaRound({ userA, userB, actions, hp, buffsIn, settings }) {
   }
   return {
     hpA: hpA2, hpB: hpB2, deadA, deadB, dmgToA, dmgToB,
+    noteA: actionNote(actA, skillA, rollA), noteB: actionNote(actB, skillB, rollB),
     buffs: {
-      [userA]: { halfDmgRounds: newHalfA, atkBonus: newAtkBonusA, deathWard: newDeathWardA, guaranteedNext: newGuaranteedA, pendingDamage: deferOutA },
-      [userB]: { halfDmgRounds: newHalfB, atkBonus: newAtkBonusB, deathWard: newDeathWardB, guaranteedNext: newGuaranteedB, pendingDamage: deferOutB },
+      [userA]: {
+        halfDmgRounds: newHalfA, atkBonus: newAtkBonusA, deathWard: newDeathWardA, guaranteedNext: newGuaranteedA,
+        pendingDamage: deferOutA, healDotRounds: newDotA, healBonusRounds: newHealBuffA, defBonusRounds: newDefBuffA,
+      },
+      [userB]: {
+        halfDmgRounds: newHalfB, atkBonus: newAtkBonusB, deathWard: newDeathWardB, guaranteedNext: newGuaranteedB,
+        pendingDamage: deferOutB, healDotRounds: newDotB, healBonusRounds: newHealBuffB, defBonusRounds: newDefBuffB,
+      },
     },
   };
 }
@@ -1895,19 +1986,55 @@ export async function chooseYachaAction(gameId, action, itemId, subAction) {
     }
     const itemName = myItemSnap ? myItemSnap.data().name : null;
     if (SKILL_NEEDS_SUBACTION.includes(itemName) && !subAction) throw new Error('함께 선택할 행동을 골라주세요.');
+    const hpNow = g.hp || {};
+    const cond = SKILL_HP_CONDITIONS.find(([n]) => n === itemName);
+    if (cond) {
+      const [, check, failMsg] = cond;
+      const myHp = hpNow[me] ?? YACHA_BASE_HP; const oppHp = hpNow[other] ?? YACHA_BASE_HP;
+      if (!check(myHp, oppHp)) throw new Error(failMsg);
+    }
     const myAct = { action, itemId: itemId || null, itemName, subAction: subAction || null };
     const actions = { ...(g.actions || {}), [me]: myAct };
-    if (!actions[other]) { tx.update(gameRef, { actions, lastActionAt: serverTimestamp() }); return; }
+
+    // 둘 다 고르기 전이면: STEAL_SKILL처럼 즉시 상대 아이템을 읽어야 하는 경우도 모든 tx.get을 먼저 끝내야 함
+    let stealPick = null;
+    if (itemName === SKILL_NAMES.STEAL_SKILL) {
+      const otherItemsSnap = await getDocs(collection(db, 'users', other, 'items'));
+      const skillDocs = otherItemsSnap.docs.filter((d) => Object.values(SKILL_NAMES).includes(d.data().name) && d.data().name !== SKILL_NAMES.STEAL_SKILL && (d.data().qty || 0) > 0);
+      if (skillDocs.length > 0) stealPick = skillDocs[Math.floor(Math.random() * skillDocs.length)];
+    }
+    if (!g.actions?.[other]) {
+      if (stealPick) {
+        const left = (stealPick.data().qty || 0) - 1;
+        if (left <= 0) tx.delete(stealPick.ref); else tx.update(stealPick.ref, { qty: left });
+      }
+      tx.update(gameRef, { actions, lastActionAt: serverTimestamp() });
+      return;
+    }
 
     // 둘 다 골랐으면 한 라운드를 한꺼번에 해석
     const actA = actions[g.userA]; const actB = actions[g.userB];
     // 상대가 이번 라운드에 아이템을 썼다면 그 아이템도 여기서 함께 확인/소모해야 함
     const otherAct = g.userA === me ? actB : actA;
     let otherItemSnap = null; let otherItemRef2 = null;
+    let otherStealPick = null;
     if (otherAct?.action === 'item' && otherAct.itemId) {
       otherItemRef2 = doc(db, 'users', other, 'items', otherAct.itemId);
       otherItemSnap = await tx.get(otherItemRef2);
       if (!otherItemSnap.exists() || (otherItemSnap.data().qty || 0) < 1) throw new Error('상대 아이템 정보를 확인할 수 없습니다.');
+      if (otherAct.itemName === SKILL_NAMES.STEAL_SKILL) {
+        const myItemsSnap = await getDocs(collection(db, 'users', me, 'items'));
+        const skillDocs = myItemsSnap.docs.filter((d) => Object.values(SKILL_NAMES).includes(d.data().name) && d.data().name !== SKILL_NAMES.STEAL_SKILL && (d.data().qty || 0) > 0);
+        if (skillDocs.length > 0) otherStealPick = skillDocs[Math.floor(Math.random() * skillDocs.length)];
+      }
+    }
+    if (stealPick) {
+      const left = (stealPick.data().qty || 0) - 1;
+      if (left <= 0) tx.delete(stealPick.ref); else tx.update(stealPick.ref, { qty: left });
+    }
+    if (otherStealPick) {
+      const left = (otherStealPick.data().qty || 0) - 1;
+      if (left <= 0) tx.delete(otherStealPick.ref); else tx.update(otherStealPick.ref, { qty: left });
     }
 
     const hp = g.hp || {};
@@ -1923,7 +2050,12 @@ export async function chooseYachaAction(gameId, action, itemId, subAction) {
     if (actA?.action === 'item') consumeItem(g.userA === me ? myItemRef : otherItemRef2, g.userA === me ? myItemSnap : otherItemSnap);
     if (actB?.action === 'item') consumeItem(g.userB === me ? myItemRef : otherItemRef2, g.userB === me ? myItemSnap : otherItemSnap);
 
-    reveal = { userA: g.userA, userB: g.userB, actA, actB, dmgA: r.dmgToA, dmgB: r.dmgToB };
+    const stolenVictim = stealPick ? other : (otherStealPick ? me : null);
+    const stolenName = stealPick ? stealPick.data().name : (otherStealPick ? otherStealPick.data().name : null);
+    reveal = {
+      userA: g.userA, userB: g.userB, actA, actB, dmgA: r.dmgToA, dmgB: r.dmgToB, noteA: r.noteA, noteB: r.noteB,
+      stolenVictim, stolenName,
+    };
 
     if (r.deadA || r.deadB) {
       const aRef = doc(db, 'users', g.userA); const bRef = doc(db, 'users', g.userB);
@@ -1950,15 +2082,59 @@ export async function chooseYachaAction(gameId, action, itemId, subAction) {
   });
   if (roomId) await postYachaChatMessage(roomId, me, '행동을 선택했습니다.');
   if (reveal) {
-    const dmgTextA = reveal.dmgA > 0 ? ` (피해 ${reveal.dmgA})` : '';
-    const dmgTextB = reveal.dmgB > 0 ? ` (피해 ${reveal.dmgB})` : '';
-    await postYachaChatMessage(roomId, reveal.userA, `${actionLabelText(reveal.actA)}${dmgTextA}`);
-    await postYachaChatMessage(roomId, reveal.userB, `${actionLabelText(reveal.actB)}${dmgTextB}`);
+    await postYachaChatMessage(roomId, reveal.userA, reveal.noteA);
+    await postYachaChatMessage(roomId, reveal.userB, reveal.noteB);
+    if (reveal.stolenVictim && reveal.stolenName) {
+      await postYachaChatMessage(roomId, null, `상대가 ${reveal.stolenName}을(를) 잃었습니다.`);
+    }
   }
   if (ended) {
     const text = ended.type === 'draw' ? '두 사람 모두 체력이 0이 되어 무승부로 전투가 종료되었습니다.' : '체력이 0이 되어 전투가 종료되었습니다.';
     await postYachaChatMessage(roomId, null, text);
   }
+}
+// 전투 중이 아닐 때도 디터니를 먹어 체력을 회복할 수 있게 함(전투 탭용). 전투 중엔 사용 불가(해당 라운드 행동으로 써야 함).
+export async function useDittanyStandalone() {
+  const me = uid();
+  const userRef = doc(db, 'users', me);
+  let healed = 0;
+  await runTransaction(db, async (tx) => {
+    const us = await tx.get(userRef);
+    if (!us.exists()) throw new Error('유저 정보를 찾을 수 없습니다.');
+    const u = us.data();
+    if (u.battleActiveGameId) throw new Error('전투 중에는 전투 화면에서 사용하세요.');
+    const itemsSnap = await getDocs(collection(db, 'users', me, 'items'));
+    const d = itemsSnap.docs.find((x) => x.data().name === DITTANY_NAME && (x.data().qty || 0) > 0);
+    if (!d) throw new Error('보유한 디터니가 없습니다.');
+    const hp = Number.isFinite(u.battleHp) ? u.battleHp : YACHA_BASE_HP;
+    if (hp >= YACHA_BASE_HP) throw new Error('이미 체력이 가득 찼습니다.');
+    const settings = await fetchYachaBattleSettings();
+    healed = rollDie(settings.dittanyDie);
+    const newHp = Math.min(YACHA_BASE_HP, hp + healed);
+    const left = (d.data().qty || 0) - 1;
+    if (left <= 0) tx.delete(d.ref); else tx.update(d.ref, { qty: left });
+    tx.update(userRef, { battleHp: newHp });
+  });
+  return healed;
+}
+// 스킬27(다시 고르기): 이미 고른 행동을 상대가 고르기 전까지 취소하고 다시 고를 수 있게 함. 사용할 때마다 아이템 1개 소모.
+export async function retractYachaAction(gameId, itemId) {
+  const me = uid();
+  const gameRef = doc(db, 'yachaGames', gameId);
+  await runTransaction(db, async (tx) => {
+    const gs = await tx.get(gameRef);
+    if (!gs.exists() || gs.data().status !== 'battling') throw new Error('지금은 사용할 수 없습니다.');
+    const g = gs.data();
+    if (!g.actions?.[me]) throw new Error('아직 행동을 선택하지 않았습니다.');
+    const other = g.userA === me ? g.userB : g.userA;
+    if (g.actions?.[other]) throw new Error('상대가 이미 행동을 선택해 다시 고를 수 없습니다.');
+    const itemRef = doc(db, 'users', me, 'items', itemId);
+    const itemSnap = await tx.get(itemRef);
+    if (!itemSnap.exists() || itemSnap.data().name !== SKILL_NAMES.RETRY_PICK || (itemSnap.data().qty || 0) < 1) throw new Error('보유하지 않은 아이템입니다.');
+    const left = (itemSnap.data().qty || 0) - 1;
+    if (left <= 0) tx.delete(itemRef); else tx.update(itemRef, { qty: left });
+    tx.update(gameRef, { actions: { ...g.actions, [me]: deleteField() }, lastActionAt: serverTimestamp() });
+  });
 }
 // 항복: 즉시 종료되며 체력은 그대로 다음 전투로 이어짐(사망이 아니므로 초기화하지 않음)
 export async function surrenderYacha(gameId) {

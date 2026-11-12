@@ -202,6 +202,11 @@ body.dark .notif-row.unread:hover{background:#17574a;}
 .modal-overlay{position:fixed;inset:0;background:rgba(20,20,22,.45);display:flex;align-items:center;justify-content:center;z-index:500;padding:20px;}
 .modal-card{background:var(--surface);border-radius:14px;width:100%;max-width:480px;max-height:86vh;overflow-y:auto;padding:24px;color:var(--text);}
 .modal-card.small{max-width:340px;text-align:center;padding:28px 24px;}
+.modal-sublist{max-height:170px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:4px 10px;margin-bottom:10px;}
+.gift-item-list{max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px 10px;margin-bottom:10px;}
+.gift-item-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);}
+.gift-item-row:last-child{border-bottom:none;}
+.gift-item-check{display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--text);}
 .modal-title{font-size:16px;font-weight:700;margin:0 0 16px;}
 .modal-card select{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:13.5px;margin-bottom:10px;background:var(--surface-3);color:var(--text);}
 .modal-card input[type=text],.modal-card input[type=number],.modal-card textarea{width:100%;border:1px solid var(--border);border-radius:8px;padding:11px 13px;font-size:14px;outline:none;margin-bottom:10px;background:var(--surface-3);color:var(--text);}

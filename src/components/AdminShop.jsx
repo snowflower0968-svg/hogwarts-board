@@ -212,7 +212,10 @@ export function YachaBattleSettingsCard() {
   const [ok, setOk] = useState('');
   useEffect(() => {
     fetchYachaBattleSettings().then((s) => {
-      const r = { atk: String(s.atkChance), def: String(s.defChance), heal: String(s.healChance), die: String(s.dieMax) };
+      const r = {
+        atk: String(s.atkChance), def: String(s.defChance), heal: String(s.healChance), die: String(s.dieMax),
+        dittany: String(s.dittanyDie),
+      };
       setV(r); setSaved(JSON.stringify(r));
     });
   }, []);
@@ -221,12 +224,12 @@ export function YachaBattleSettingsCard() {
   async function save() {
     setErr(''); setOk('');
     try {
-      await saveYachaBattleSettings({ atkChance: v.atk, defChance: v.def, healChance: v.heal, dieMax: v.die });
+      await saveYachaBattleSettings({ atkChance: v.atk, defChance: v.def, healChance: v.heal, dieMax: v.die, dittanyDie: v.dittany });
       setSaved(JSON.stringify(v)); setOk('저장했습니다.');
     } catch (e) { setErr(e.message); }
   }
   return (
-    <AdminCard title="야차 전투 확률 · 주사위" hint="공격/방어/회복이 각각 성공할 확률(%)과, 성공 시 수치를 정하는 주사위의 최대값이에요. 기본은 50%, 1d20입니다.">
+    <AdminCard title="야차 전투 확률 · 주사위" hint="공격/방어/회복이 각각 성공할 확률(%)과, 성공 시 수치를 정하는 주사위의 최대값이에요. 기본은 70%, 1d20이며 디터니 회복은 기본 1d10입니다.">
       <div className="a-form-row">
         <span className="a-inline-note">공격 성공률</span><input className="txt-input" type="number" min="0" max="100" value={v.atk} onChange={change('atk')} style={{ width: 70 }} /><span className="a-inline-note">%</span>
       </div>
@@ -238,6 +241,9 @@ export function YachaBattleSettingsCard() {
       </div>
       <div className="a-form-row">
         <span className="a-inline-note">주사위 (1d_)</span><input className="txt-input" type="number" min="1" value={v.die} onChange={change('die')} style={{ width: 70 }} />
+      </div>
+      <div className="a-form-row">
+        <span className="a-inline-note">디터니 회복 주사위 (1d_)</span><input className="txt-input" type="number" min="1" value={v.dittany} onChange={change('dittany')} style={{ width: 70 }} />
         <button className="a-btn accent big" disabled={JSON.stringify(v) === saved} onClick={save}>저장</button>
       </div>
       {err && <div className="auth-error" style={{ marginBottom: 0 }}>{err}</div>}

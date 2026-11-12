@@ -96,8 +96,11 @@ export function GambleAdmin() {
 // ---------------- 채팅 기록 ----------------
 function sameDay(a, b) { return new Date(a).toDateString() === new Date(b).toDateString(); }
 
+const GIFT_TICKET_LABEL = { yacha: '야차권', dig: '간이조사권' };
 function giftLabel(m) {
-  const what = m.kind === 'item' ? `소지품 ${m.item_name} x${m.qty}` : `포인트 ${m.amount}`;
+  const what = m.kind === 'item' ? `소지품 ${m.item_name} x${m.qty}`
+    : m.kind === 'ticket' ? `${GIFT_TICKET_LABEL[m.ticket_type] || '티켓'} x${m.qty}`
+      : `포인트 ${m.amount}`;
   const st = m.status === 'accepted' ? '받음' : m.status === 'cancelled' ? '취소됨' : '대기중';
   return `선물 · ${what} (${st})`;
 }

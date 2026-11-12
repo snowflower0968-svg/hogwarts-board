@@ -1,6 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { subscribeShop, buyShopItem, discountActive, effectivePrice, fetchVoidTiers, voidPriceFor } from '../lib/api';
+import {
+  subscribeShop, buyShopItem, discountActive, effectivePrice, fetchVoidTiers, voidPriceFor,
+  fetchItemsOf, useDittanyStandalone, DITTANY_NAME, SKILL_NAMES, SKILL_DESCRIPTIONS, YACHA_BASE_HP,
+} from '../lib/api';
 import { fmtRemain } from '../lib/helpers';
+import { SegTabs } from './Ui';
 
 function ProductCard({ s, now, points, onBuy, holdingVoid }) {
   const [qty, setQty] = useState('1');
@@ -40,7 +44,75 @@ function ProductCard({ s, now, points, onBuy, holdingVoid }) {
   );
 }
 
+function BattleTab({ profile, onBought }) {
+  const [items, setItems] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [err, setErr] = useState('');
+  const myHp = profile.battle_hp ?? YACHA_BASE_HP;
+  const myPoints = profile.battle_points || 0;
+
+  const load = () => fetchItemsOf(profile.id).then(setItems).catch(() => setItems([]));
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [profile.id]);
+
+  const dittany = items.find((it) => it.name === DITTANY_NAME);
+  const skills = items.filter((it) => Object.values(SKILL_NAMES).includes(it.name));
+  const pct = Math.max(0, Math.min(100, (myHp / YACHA_BASE_HP) * 100));
+
+  async function eatDittany() {
+    setErr(''); setMsg(''); setBusy(true);
+    try {
+      const healed = await useDittanyStandalone();
+      setMsg(`체력을 ${healed} 회복했습니다.`);
+      await load(); if (onBought) await onBought();
+    } catch (e) { setErr(e.message || '오류가 발생했습니다.'); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <>
+      <div className="dig-status">
+        <div className="dig-charges">
+          <span className="dig-charge-num" style={{ color: 'var(--gold)' }}>{myHp}</span>
+          <span className="dig-charge-max"> / {YACHA_BASE_HP}</span>
+          <div className="dig-charge-lbl">내 체력</div>
+        </div>
+        <div className="dig-timer">
+          전투 점수 <b>{myPoints}</b>점
+        </div>
+      </div>
+      <div className="yacha-hp-bar" style={{ margin: '0 4px 14px' }}><div className="yacha-hp-fill" style={{ width: `${pct}%` }} /></div>
+      {msg && <div className="auth-success" style={{ margin: '0 4px 10px' }}>{msg}</div>}
+      {err && <div className="auth-error" style={{ margin: '0 4px 10px' }}>{err}</div>}
+      <div className="shop-card" style={{ marginBottom: 14 }}>
+        <div className="shop-top">
+          <div className="shop-name">{DITTANY_NAME}</div>
+          <div className="shop-price"><b>보유 {dittany?.qty || 0}개</b></div>
+        </div>
+        <div className="shop-desc">체력이 가득 찼거나 보유하지 않으면 사용할 수 없어요. (전투 중에는 전투 화면에서 사용하세요)</div>
+        <div className="shop-buy">
+          <button disabled={busy || !dittany || myHp >= YACHA_BASE_HP} onClick={eatDittany}>
+            {myHp >= YACHA_BASE_HP ? '체력 가득 참' : !dittany ? '보유하지 않음' : '섭취'}
+          </button>
+        </div>
+      </div>
+      <div className="board-title-bar"><h2 style={{ fontSize: 16 }}>내 스킬</h2></div>
+      {skills.length === 0 && <div className="empty-state">보유한 스킬이 없습니다.</div>}
+      {skills.map((it) => (
+        <div key={it.id} className="shop-card" style={{ marginBottom: 8 }}>
+          <div className="shop-top">
+            <div className="shop-name">{it.name}</div>
+            <div className="shop-price"><b>x{it.qty}</b></div>
+          </div>
+          <div className="shop-desc">{it.description || SKILL_DESCRIPTIONS[it.name] || ''}</div>
+        </div>
+      ))}
+    </>
+  );
+}
+
 export default function Shop({ profile, onBought }) {
+  const [tab, setTab] = useState('shop');
   const [items, setItems] = useState(null);
   const [now, setNow] = useState(Date.now());
   const [confirm, setConfirm] = useState(null);
@@ -71,23 +143,28 @@ export default function Shop({ profile, onBought }) {
   return (
     <>
       <div className="board-title-bar"><h2>상점</h2></div>
-      <div className="dig-status">
-        <div className="dig-charges">
-          <span className="dig-charge-num" style={{ color: 'var(--gold)' }}>{profile.points}</span>
-          <span className="dig-charge-max"> P</span>
-          <div className="dig-charge-lbl">내 포인트</div>
-        </div>
-        <div className="dig-timer">
-          보유 조사권 <b>{profile.dig_bonus || 0}</b>장
-          <div style={{ marginTop: 4 }}>도박 무효권 <b>{profile.gamble_void || 0}</b>장</div>
-          <div style={{ marginTop: 4 }}>야차권 <b>{profile.yacha_bonus || 0}</b>장</div>
-        </div>
-      </div>
-      {msg && <div className="auth-success" style={{ margin: '0 4px 10px' }}>{msg}</div>}
-      {err && <div className="auth-error" style={{ margin: '0 4px 10px' }}>{err}</div>}
-      {items === null && <div className="empty-state">불러오는 중</div>}
-      {items && list.length === 0 && <div className="empty-state">판매 중인 상품이 없습니다.</div>}
-      {list.map((raw) => ({ ...raw, price: raw.kind === 'gamble_void' ? voidPriceFor(raw.price, tiers, profile.galleon || 0) : raw.price })).map((s) => <ProductCard key={s.id} s={s} now={now} points={profile.points} holdingVoid={(profile.gamble_void || 0) >= 1} onBuy={(item, q, total) => !busy && setConfirm({ s: item, q, total })} />)}
+      <SegTabs variant="sub" items={[{ id: 'shop', label: '상점' }, { id: 'battle', label: '전투' }]} value={tab} onChange={setTab} />
+      {tab === 'battle' ? <BattleTab profile={profile} onBought={onBought} /> : (
+        <>
+          <div className="dig-status">
+            <div className="dig-charges">
+              <span className="dig-charge-num" style={{ color: 'var(--gold)' }}>{profile.points}</span>
+              <span className="dig-charge-max"> P</span>
+              <div className="dig-charge-lbl">내 포인트</div>
+            </div>
+            <div className="dig-timer">
+              보유 조사권 <b>{profile.dig_bonus || 0}</b>장
+              <div style={{ marginTop: 4 }}>도박 무효권 <b>{profile.gamble_void || 0}</b>장</div>
+              <div style={{ marginTop: 4 }}>야차권 <b>{profile.yacha_bonus || 0}</b>장</div>
+            </div>
+          </div>
+          {msg && <div className="auth-success" style={{ margin: '0 4px 10px' }}>{msg}</div>}
+          {err && <div className="auth-error" style={{ margin: '0 4px 10px' }}>{err}</div>}
+          {items === null && <div className="empty-state">불러오는 중</div>}
+          {items && list.length === 0 && <div className="empty-state">판매 중인 상품이 없습니다.</div>}
+          {list.map((raw) => ({ ...raw, price: raw.kind === 'gamble_void' ? voidPriceFor(raw.price, tiers, profile.galleon || 0) : raw.price })).map((s) => <ProductCard key={s.id} s={s} now={now} points={profile.points} holdingVoid={(profile.gamble_void || 0) >= 1} onBuy={(item, q, total) => !busy && setConfirm({ s: item, q, total })} />)}
+        </>
+      )}
 
       {confirm && (
         <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setConfirm(null)}>

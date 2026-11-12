@@ -1,11 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import {
-  acceptYacha, declineYacha, chooseYachaAction, surrenderYacha, checkYachaTimeout,
+  acceptYacha, declineYacha, chooseYachaAction, surrenderYacha, checkYachaTimeout, retractYachaAction,
   fetchItemsOf, DITTANY_NAME, SKILL_NAMES, SKILL_NEEDS_SUBACTION, SKILL_DESCRIPTIONS, YACHA_BASE_HP,
 } from '../lib/api';
 
 const SUB_LABEL = { attack: '공격', defend: '방어', heal: '회복' };
-const ADVANTAGE_SUB_OPTIONS = ['attack', 'heal'];
+const SUB_OPTIONS_BY_SKILL = {
+  [SKILL_NAMES.ADVANTAGE]: ['attack', 'heal'],
+  [SKILL_NAMES.MIRROR]: ['attack', 'defend', 'heal'],
+};
 
 function HpBar({ label, hp }) {
   const pct = Math.max(0, Math.min(100, (hp / YACHA_BASE_HP) * 100));
@@ -49,11 +52,12 @@ export default function YachaGame({ profile, room, game, onRefresh }) {
   }
   function useItem(it) {
     if (SKILL_NEEDS_SUBACTION.includes(it.name)) {
-      setSubPick({ item: it, options: ADVANTAGE_SUB_OPTIONS });
+      setSubPick({ item: it, options: SUB_OPTIONS_BY_SKILL[it.name] || [] });
       return;
     }
     run(() => chooseYachaAction(game.id, 'item', it.id));
   }
+  const retryItem = items.find((it) => it.name === SKILL_NAMES.RETRY_PICK);
 
   if (['declined', 'ended', 'cancelled'].includes(game.status)) {
     const r = game.result;
@@ -116,7 +120,15 @@ export default function YachaGame({ profile, room, game, onRefresh }) {
             <button type="button" className="text-btn" onClick={() => setSubPick(null)}>취소</button>
           </div>
         ) : picked ? (
-          <div className="yacha-note">행동을 선택했습니다. {oppPicked ? '곧 결과가 나와요.' : '상대의 선택을 기다리는 중'}</div>
+          <div className="yacha-note">
+            행동을 선택했습니다. {oppPicked ? '곧 결과가 나와요.' : '상대의 선택을 기다리는 중'}
+            {!oppPicked && retryItem && (
+              <button type="button" className="text-btn" style={{ marginLeft: 8 }} disabled={busy}
+                onClick={() => run(() => retractYachaAction(game.id, retryItem.id))}>
+                다시 고르기 (보유 {retryItem.qty})
+              </button>
+            )}
+          </div>
         ) : (
           <>
             <div className="yacha-action-row">
@@ -127,8 +139,8 @@ export default function YachaGame({ profile, room, game, onRefresh }) {
             </div>
             {showItems && (
               <div className="yacha-item-row">
-                {items.length === 0 && <div className="yacha-note">사용할 수 있는 아이템이 없습니다.</div>}
-                {items.map((it) => (
+                {items.filter((it) => it.name !== SKILL_NAMES.RETRY_PICK).length === 0 && <div className="yacha-note">사용할 수 있는 아이템이 없습니다.</div>}
+                {items.filter((it) => it.name !== SKILL_NAMES.RETRY_PICK).map((it) => (
                   <button key={it.id} type="button" className="a-btn yacha-item-btn" disabled={busy} onClick={() => useItem(it)} title={it.description || SKILL_DESCRIPTIONS[it.name] || ''}>
                     <div>{it.name === DITTANY_NAME ? `${DITTANY_NAME} 섭취` : it.name} (보유 {it.qty})</div>
                     <div className="yacha-item-desc">{it.description || SKILL_DESCRIPTIONS[it.name] || ''}</div>

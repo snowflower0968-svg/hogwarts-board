@@ -506,7 +506,7 @@ export default function App() {
       {giftRoomId && (
         <GiftModal balance={profile.points} items={giftItems} yachaTicket={profile.yacha_bonus || 0} digTicket={profile.dig_bonus || 0} onCancel={() => setGiftRoomId(null)}
           onSendPoints={async (amt) => { await api.sendGift(giftRoomId, amt); const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh); setGiftRoomId(null); loadChat(giftRoomId); }}
-          onSendItem={async (itemId, qty) => { await api.sendGiftItem(giftRoomId, itemId, qty); setGiftRoomId(null); loadChat(giftRoomId); }}
+          onSendItem={async (picks) => { for (const p of picks) { await api.sendGiftItem(giftRoomId, p.id, p.qty); } setGiftRoomId(null); loadChat(giftRoomId); }}
           onSendTicket={async (ticketType, qty) => { await api.sendGiftTicket(giftRoomId, ticketType, qty); const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh); setGiftRoomId(null); loadChat(giftRoomId); }} />
       )}
       {identityUserId && (

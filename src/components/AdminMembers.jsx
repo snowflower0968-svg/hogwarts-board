@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   HOUSES, grantPoints, adminAdjustGalleon, adminGrantDigTickets, adminGrantGambleVoid,
-  adminGrantItem, adminRemoveItem, adminBulkGrant, adminForgiveDebt, fetchItemsOf, fetchNotes, fetchProfileById, fetchDigRewards, fetchShopItems,
+  adminGrantItem, adminRemoveItem, adminBulkGrant, adminBulkSetHouse, adminForgiveDebt, fetchItemsOf, fetchNotes, fetchProfileById, fetchDigRewards, fetchShopItems,
 } from '../lib/api';
 import { fmtTime, houseName } from '../lib/helpers';
 import { Avatar, AdminCard, QtyStepper, SegTabs } from './Ui';
@@ -27,19 +27,58 @@ function PendingList({ users, actions }) {
 }
 
 // ---------------- 캐릭터 목록 ----------------
-function CharacterList({ users, onOpen }) {
+function CharacterList({ users, onOpen, refresh }) {
   const [q, setQ] = useState('');
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState(() => new Set());
+  const [targetHouse, setTargetHouse] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
   const shown = useMemo(() => {
     const t = q.trim().toLowerCase();
     return users.filter((u) => !t || (u.character_name || '').toLowerCase().includes(t) || (u.login_id || '').toLowerCase().includes(t));
   }, [users, q]);
+
+  function toggle(id) {
+    setSelected((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  }
+  async function applyHouse() {
+    if (!selected.size || !targetHouse) return;
+    if (!window.confirm(`선택한 ${selected.size}명을 "${houseName(targetHouse)}"로 변경할까요?`)) return;
+    setBusy(true); setMsg('');
+    try {
+      await adminBulkSetHouse([...selected], targetHouse);
+      setMsg(`${selected.size}명의 소속을 변경했습니다.`);
+      setSelected(new Set()); setSelectMode(false); setTargetHouse('');
+      if (refresh) await refresh();
+    } catch (e) { setMsg(e.message || '오류가 발생했습니다.'); }
+    finally { setBusy(false); }
+  }
   return (
     <>
       <input className="txt-input a-search" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="이름 또는 아이디 검색" />
+      <div className="log-toolbar">
+        <span>{shown.length}명</span>
+        {!selectMode && <button className="select-toggle" onClick={() => setSelectMode(true)}>소속 일괄 변경</button>}
+      </div>
+      {selectMode && (
+        <div className="select-bar" style={{ flexWrap: 'wrap' }}>
+          <span>{selected.size}명 선택</span>
+          <button onClick={() => setSelected(new Set(shown.map((u) => u.id)))}>전체 선택</button>
+          <select className="house-select" value={targetHouse} onChange={(e) => setTargetHouse(e.target.value)}>
+            <option value="">바꿀 소속 선택</option>
+            {HOUSES.map((h) => <option key={h.id} value={h.id}>{h.name}{h.era === 'post' ? ' (회귀 후)' : ''}</option>)}
+          </select>
+          <button className="danger" disabled={!selected.size || !targetHouse || busy} onClick={applyHouse}>{busy ? '변경 중...' : '적용'}</button>
+          <button onClick={() => { setSelectMode(false); setSelected(new Set()); setTargetHouse(''); }}>취소</button>
+        </div>
+      )}
+      {msg && <div className="auth-success a-flash">{msg}</div>}
       <AdminCard title={`캐릭터 ${shown.length}명`}>
         {shown.length === 0 && <div className="a-empty">검색 결과가 없습니다.</div>}
         {shown.map((u) => (
-          <div key={u.id} className="a-item a-click" onClick={() => onOpen(u.id)}>
+          <div key={u.id} className="a-item a-click" onClick={selectMode ? () => toggle(u.id) : () => onOpen(u.id)}>
+            {selectMode && <input type="checkbox" className="row-check" checked={selected.has(u.id)} readOnly />}
             <Avatar name={u.character_name} />
             <div className="a-item-main">
               <div className="a-item-title">
@@ -51,7 +90,7 @@ function CharacterList({ users, onOpen }) {
               <div className="a-item-sub">{u.login_id}{u.house ? ` · ${houseName(u.house)}` : ''}</div>
             </div>
             <div className="a-item-meta"><b style={{ color: 'var(--gold)' }}>{u.points}P</b></div>
-            <span className="a-chevron">›</span>
+            {!selectMode && <span className="a-chevron">›</span>}
           </div>
         ))}
       </AdminCard>
@@ -269,7 +308,7 @@ function CharacterDetail({ userId, allUsers, actions, onBack, onWithdraw }) {
             <div className="a-item-main"><div className="a-item-title">기숙사</div></div>
             <select className="house-select" value={u.house || ''} onChange={(e) => actions.setHouse(u.id, e.target.value)}>
               <option value="">미지정</option>
-              {HOUSES.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
+              {HOUSES.map((h) => <option key={h.id} value={h.id}>{h.name}{h.era === 'post' ? ' (회귀 후)' : ''}</option>)}
             </select>
           </div>
         )}
@@ -346,7 +385,7 @@ function BulkGrant({ allUsers, refresh }) {
         <div className="a-chips" style={{ marginBottom: 10 }}>
           <button type="button" className={allOn ? 'on' : ''} onClick={() => setHouses(allOn ? [] : HOUSES.map((h) => h.id))}>전체</button>
           {HOUSES.map((h) => (
-            <button key={h.id} type="button" className={houses.includes(h.id) ? 'on' : ''} onClick={() => toggle(h.id)}>{h.name} {countOf(h.id)}명</button>
+            <button key={h.id} type="button" className={houses.includes(h.id) ? 'on' : ''} onClick={() => toggle(h.id)}>{h.name}{h.era === 'post' ? ' (회귀 후)' : ''} {countOf(h.id)}명</button>
           ))}
         </div>
         <SegTabs variant="sub" items={KINDS} value={kind} onChange={(k) => { setKind(k); setAmount(''); setErr(''); setOk(''); }} />
@@ -402,7 +441,7 @@ export function MembersSection({ pendingUsers, allUsers, actions, refresh }) {
     <>
       <SegTabs variant="sub" value={sub} onChange={(v) => { touched.current = true; setSub(v); }}
         items={[{ id: 'pending', label: '가입 승인', badge: pendingUsers.length || null }, { id: 'chars', label: '캐릭터' }, { id: 'bulk', label: '일괄 지급' }]} />
-      {sub === 'pending' ? <PendingList users={pendingUsers} actions={actions} /> : sub === 'bulk' ? <BulkGrant allUsers={allUsers} refresh={refresh} /> : <CharacterList users={visible} onOpen={setOpenId} />}
+      {sub === 'pending' ? <PendingList users={pendingUsers} actions={actions} /> : sub === 'bulk' ? <BulkGrant allUsers={allUsers} refresh={refresh} /> : <CharacterList users={visible} onOpen={setOpenId} refresh={refresh} />}
     </>
   );
 }
