@@ -67,6 +67,15 @@ export default function App() {
   }
   function markSeenInit(boardId) { try { localStorage.setItem(seenKey(boardId), String(Date.now())); } catch (e) { /* 저장 불가 */ } }
   useEffect(() => { if (profile && view === 'board') markSeen(currentBoard); }, [profile?.id, view, currentBoard, recentStamps]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 자유게시판 기본 선택을 내 회귀 전/후(era)에 맞춰 자동으로 맞춰줌(기숙사 미배정이어도 적용)
+  useEffect(() => {
+    if (!profile) return;
+    const wantFree = profile.era === 'post' ? 'free_post' : 'free';
+    if ((currentBoard === 'free' || currentBoard === 'free_post') && currentBoard !== wantFree) {
+      setCurrentBoard(wantFree);
+    }
+  }, [profile?.era]); // eslint-disable-line react-hooks/exhaustive-deps
   const chatFromRef = useRef(null);
 
   // ---------------- 스크롤 위치 기억 (뒤로 가면 보던 자리로 복원) ----------------
