@@ -28,7 +28,7 @@ export default function Chat({ profile, room, messages, onBack, onSend, onOpenGi
       <div className="back-row" onClick={onBack}>‹ 채팅</div>
       {!active && <div className="chat-notice">대화 가능 시간이 종료되었습니다.</div>}
       {yachaGame && <YachaGame profile={profile} room={room} game={yachaGame} onRefresh={onRefreshYacha} />}
-      <div className="chat-thread">
+      <div className={`chat-thread${yachaGame && ['pending', 'battling'].includes(yachaGame.status) ? ' with-yacha' : ''}`}>
         {messages.length === 0 && <div className="no-comments">메시지가 없습니다.</div>}
         {messages.map((m) => {
           const mine = m.sender_id === profile.id;

@@ -11,7 +11,7 @@ import { auth, db, loginIdToEmail } from '../firebaseClient';
 
 // 진영(기숙사+결사) 기본 목록. 회귀 전/후 각각 따로 소속을 가질 수 있어서,
 // 실제 유저의 house 값은 회귀 전엔 그대로(예: 'gryffindor'), 회귀 후엔 'post_' 접두어가 붙어요(예: 'post_gryffindor').
-const FACTIONS = [
+export const FACTIONS = [
   { id: 'gryffindor', name: '그리핀도르' },
   { id: 'slytherin', name: '슬리데린' },
   { id: 'ravenclaw', name: '래번클로' },
@@ -19,6 +19,8 @@ const FACTIONS = [
   { id: 'phoenix', name: '불사조 기사단' },
   { id: 'deatheater', name: '죽음을 먹는 자들' },
 ];
+// 회귀 전/후 상관없이 같은 기숙사 그룹으로 묶기 위한 소속 id (post_ 접두어 제거)
+export function factionOf(house) { return house ? house.replace(/^post_/, '') : null; }
 export const HOUSES = [
   ...FACTIONS.map((f) => ({ id: f.id, name: f.name, era: 'pre' })),
   ...FACTIONS.map((f) => ({ id: `post_${f.id}`, name: `${f.name} (회귀 후)`, era: 'post' })),
@@ -151,6 +153,7 @@ function mapUser(id, d) {
     dig_charges: d.digCharges ?? null, dig_charge_at: d.digChargeAt ? ts(d.digChargeAt) : null,
     dig_bonus: d.digBonus || 0, gamble_void: d.gambleVoid || 0, galleon: d.galleon || 0, withdrawn: !!d.withdrawn, post_count: d.postCount ?? null,
     yacha_bonus: d.yachaTicket || 0,
+    battle_hp: d.battleHp ?? 100, battle_points: d.battlePoints || 0,
   };
 }
 export function subscribeOwnStatus(id, cb) {
@@ -904,6 +907,51 @@ export async function adminResetAllPointsAndItems() {
   await logItem({ action: 'reset_all', userId: 'admin', userName: '관리자', itemName: '전체 포인트·소지품 초기화', itemDescription: `대상 ${count}명`, qty: count });
   return count;
 }
+
+// 선택한 항목만 전체 회원 대상으로 초기화 (개인 기재·갈레온·조사권·야차권 등 포함 가능)
+// options: { points, items, notes, galleon, digTicket, gambleVoid, yachaTicket, battle }
+export async function adminResetSelected(options) {
+  const opt = options || {};
+  const snap = await getDocs(collection(db, 'users'));
+  let count = 0;
+  for (const d of snap.docs) {
+    const patch = {};
+    if (opt.points) patch.points = 0;
+    if (opt.galleon) patch.galleon = 0;
+    if (opt.digTicket) patch.digBonus = 0;
+    if (opt.gambleVoid) patch.gambleVoid = 0;
+    if (opt.yachaTicket) patch.yachaTicket = 0;
+    if (opt.battle) { patch.battleHp = 100; patch.battlePoints = 0; }
+    if (Object.keys(patch).length) {
+      // eslint-disable-next-line no-await-in-loop
+      await updateDoc(doc(db, 'users', d.id), patch);
+    }
+    if (opt.items) {
+      // eslint-disable-next-line no-await-in-loop
+      const itemsSnap = await getDocs(collection(db, 'users', d.id, 'items'));
+      // eslint-disable-next-line no-await-in-loop
+      await Promise.all(itemsSnap.docs.map((it) => deleteDoc(it.ref)));
+    }
+    if (opt.notes) {
+      // eslint-disable-next-line no-await-in-loop
+      const notesSnap = await getDocs(collection(db, 'users', d.id, 'notes'));
+      // eslint-disable-next-line no-await-in-loop
+      await Promise.all(notesSnap.docs.map((n) => deleteDoc(n.ref)));
+    }
+    count += 1;
+  }
+  const labels = [];
+  if (opt.points) labels.push('포인트');
+  if (opt.items) labels.push('소지품');
+  if (opt.notes) labels.push('개인 기재');
+  if (opt.galleon) labels.push('갈레온');
+  if (opt.digTicket) labels.push('조사권');
+  if (opt.gambleVoid) labels.push('도박무효권');
+  if (opt.yachaTicket) labels.push('야차권');
+  if (opt.battle) labels.push('전투 체력·점수');
+  await logItem({ action: 'reset_selected', userId: 'admin', userName: '관리자', itemName: `선택 초기화: ${labels.join(', ') || '(선택 없음)'}`, itemDescription: `대상 ${count}명`, qty: count });
+  return count;
+}
 export async function fetchAllUsers() {
   const snap = await getDocs(query(collection(db, 'users'), orderBy('createdAt')));
   return snap.docs.map((d) => mapUser(d.id, d.data()));
@@ -1531,16 +1579,59 @@ export async function adminForgiveDebt(userId) {
 }
 
 
-// ================= 야차 (가위바위보 1:1 게임) =================
-const RPS_LABEL = { rock: '바위', paper: '보', scissors: '가위' };
-export function rpsLabel(choice) { return RPS_LABEL[choice] || choice; }
-// 'A' | 'B' | null(비김)
-function rpsWinner(a, b) {
-  if (a === b) return null;
-  const beats = { rock: 'scissors', scissors: 'paper', paper: 'rock' };
-  return beats[a] === b ? 'A' : 'B';
+// ================= 야차 (1:1 체력 전투) =================
+export const YACHA_ACTIONS = ['attack', 'defend', 'heal', 'item'];
+export const YACHA_ACTION_LABEL = { attack: '공격', defend: '방어', heal: '회복' };
+export const YACHA_BASE_HP = 100;
+export const DITTANY_NAME = '디터니';
+// 간이 조사로 주울 수 있는 스킬(=소지품) 이름. "스킬1"~"스킬19"라는 이름 자체로 효과를 인식하고,
+// 실제 설명은 SKILL_DESCRIPTIONS에 적어서 간이 조사 보상 등록 시 description으로 함께 들어감(adminSeedYachaSkills).
+export const SKILL_NAMES = {
+  NULLIFY: '스킬1', ATK_SURE: '스킬2', DEF_SURE: '스킬3', COIN: '스킬4', LIFESTEAL: '스킬5',
+  FORCE_DEFEND: '스킬6', HEAL_D20: '스킬7', ATK_D20_FIXED: '스킬8', GUARD_HALF: '스킬9', COPY_BUFF: '스킬10',
+  HEAL_D30: '스킬11', GUARANTEE_NEXT: '스킬12', ADVANTAGE: '스킬13', SACRIFICE_ATK: '스킬14', DEFER_DMG: '스킬15',
+  HEAL_NULLIFY: '스킬16', STRENGTH_POTION: '스킬17', DEATH_WARD: '스킬18', SWAP_HP: '스킬19',
+};
+export const SKILL_DESCRIPTIONS = {
+  [SKILL_NAMES.NULLIFY]: '해당 라운드 들어오는 모든 피해를 상쇄합니다.',
+  [SKILL_NAMES.ATK_SURE]: '이번 라운드 공격 성공률 100% 고정.',
+  [SKILL_NAMES.DEF_SURE]: '이번 라운드 방어 성공률 100% 고정.',
+  [SKILL_NAMES.COIN]: '1/2 확률로 체력 1d20을 회복하거나 깎습니다.',
+  [SKILL_NAMES.LIFESTEAL]: '이번 라운드 입힌 피해의 절반만큼 자신 체력을 회복합니다.',
+  [SKILL_NAMES.FORCE_DEFEND]: '이번 라운드 상대 행동을 강제로 "방어"로 고정시킵니다.',
+  [SKILL_NAMES.HEAL_D20]: '체력 1d20만큼 즉시 회복합니다(성공률 없음).',
+  [SKILL_NAMES.ATK_D20_FIXED]: '상대에게 1d20 고정 피해(공격 성공률 무시).',
+  [SKILL_NAMES.GUARD_HALF]: '이번 라운드와 다음 라운드까지 들어오는 피해를 절반으로 줄입니다.',
+  [SKILL_NAMES.COPY_BUFF]: '이번 라운드 자신에게 걸린 모든 이로운 효과를 상대에게도 복사합니다.',
+  [SKILL_NAMES.HEAL_D30]: '즉시 체력 1d30 회복합니다(성공률 없음).',
+  [SKILL_NAMES.GUARANTEE_NEXT]: '다음 라운드 자신의 행동이 반드시 성공합니다.',
+  [SKILL_NAMES.ADVANTAGE]: '주사위를 2번 굴려 더 높은 값을 사용합니다(공격/회복 한정).',
+  [SKILL_NAMES.SACRIFICE_ATK]: '체력 10을 희생해 상대에게 1d20+5 피해를 입힙니다.',
+  [SKILL_NAMES.DEFER_DMG]: '이번 라운드 받는 피해를 전부 다음 라운드로 미룹니다.',
+  [SKILL_NAMES.HEAL_NULLIFY]: '상대의 이번 라운드 회복을 무효화합니다.',
+  [SKILL_NAMES.STRENGTH_POTION]: '체력 10을 즉시 소모하고 이후 공격 피해가 +5 됩니다(전투 끝까지 영구).',
+  [SKILL_NAMES.DEATH_WARD]: '사망 시 1회 한정으로 체력 1로 부활합니다.',
+  [SKILL_NAMES.SWAP_HP]: '상대와 자신의 체력을 서로 맞바꿉니다.',
+};
+// 사용할 때 "공격/회복 중 어느 쪽에 적용할지" 추가 선택이 필요한 스킬
+export const SKILL_NEEDS_SUBACTION = [SKILL_NAMES.ADVANTAGE];
+export const NULLIFY_SKILL_NAME = SKILL_NAMES.NULLIFY; // 하위 호환용 별칭
+
+// 디터니 + 스킬 1~19를 간이 조사 보상 목록에 한 번에 등록(이미 있는 이름은 건너뜀). 확률(weight)은 기본 10으로 두고 관리자가 조정.
+export async function adminSeedYachaSkills() {
+  const existing = await fetchDigRewards();
+  const existingNames = new Set(existing.map((r) => r.name));
+  const toAdd = [{ name: DITTANY_NAME, description: '먹으면 체력이 10 오릅니다(최대 100). 전투 탭에서도 사용할 수 있어요.' }];
+  Object.values(SKILL_NAMES).forEach((name) => { toAdd.push({ name, description: SKILL_DESCRIPTIONS[name] || '' }); });
+  let count = 0;
+  for (const item of toAdd) {
+    if (existingNames.has(item.name)) continue;
+    // eslint-disable-next-line no-await-in-loop
+    await saveDigReward(null, { name: item.name, description: item.description, weight: 10 });
+    count += 1;
+  }
+  return count;
 }
-const YACHA_MAX_ROUNDS = 3;
 
 export async function fetchYachaTimeoutMs() {
   try { const snap = await getDoc(doc(db, 'settings', 'yacha')); if (snap.exists() && snap.data().timeoutMs) return Number(snap.data().timeoutMs); } catch (e) { /* 기본값 */ }
@@ -1552,14 +1643,41 @@ export async function saveYachaTimeoutMs(minutesRaw) {
   await setDoc(doc(db, 'settings', 'yacha'), { timeoutMs: Math.round(min * 60 * 1000) }, { merge: true });
   return min;
 }
+const DEFAULT_YACHA_BATTLE = { atkChance: 50, defChance: 50, healChance: 50, dieMax: 20 };
+export async function fetchYachaBattleSettings() {
+  try {
+    const snap = await getDoc(doc(db, 'settings', 'yacha'));
+    if (!snap.exists()) return { ...DEFAULT_YACHA_BATTLE };
+    const d = snap.data();
+    return {
+      atkChance: Number.isFinite(d.atkChance) ? d.atkChance : DEFAULT_YACHA_BATTLE.atkChance,
+      defChance: Number.isFinite(d.defChance) ? d.defChance : DEFAULT_YACHA_BATTLE.defChance,
+      healChance: Number.isFinite(d.healChance) ? d.healChance : DEFAULT_YACHA_BATTLE.healChance,
+      dieMax: Number.isFinite(d.dieMax) && d.dieMax > 0 ? d.dieMax : DEFAULT_YACHA_BATTLE.dieMax,
+    };
+  } catch (e) { return { ...DEFAULT_YACHA_BATTLE }; }
+}
+export async function saveYachaBattleSettings({ atkChance, defChance, healChance, dieMax }) {
+  const a = Number(atkChance); const d = Number(defChance); const h = Number(healChance); const die = Number(dieMax);
+  if (![a, d, h].every((v) => v >= 0 && v <= 100)) throw new Error('확률은 0~100 사이로 입력하세요.');
+  if (!(die >= 1)) throw new Error('주사위 최대값은 1 이상이어야 합니다.');
+  await setDoc(doc(db, 'settings', 'yacha'), { atkChance: a, defChance: d, healChance: h, dieMax: Math.round(die) }, { merge: true });
+}
+// 기숙사(진영)별 전투 점수 합계 — 관리자 화면에서 사용
+export function aggregateBattlePointsByFaction(users) {
+  const sums = Object.fromEntries(FACTIONS.map((f) => [f.id, 0]));
+  (users || []).forEach((u) => {
+    const fid = factionOf(u.house);
+    if (fid && fid in sums) sums[fid] += u.battle_points || 0;
+  });
+  return FACTIONS.map((f) => ({ id: f.id, name: f.name, total: sums[f.id] }));
+}
 
 function mapYacha(id, d) {
   return {
     id, room_id: d.roomId, user_a: d.userA, user_b: d.userB, status: d.status, requested_by: d.requestedBy,
-    round: d.round || 1, max_rounds: YACHA_MAX_ROUNDS, bets: d.bets || {},
-    wins: d.wins || {}, pot: d.pot || { points: {}, items: {} },
-    choices: d.choices || {}, next_round_agree: d.nextRoundAgree || {},
-    result: d.result || null, last_action_at: d.lastActionAt ? ts(d.lastActionAt) : Date.now(), created_at: ts(d.createdAt),
+    round: d.round || 1, hp: d.hp || {}, actions: d.actions || {}, buffs: d.buffs || {}, result: d.result || null,
+    last_action_at: d.lastActionAt ? ts(d.lastActionAt) : Date.now(), created_at: ts(d.createdAt),
   };
 }
 export async function fetchYachaGame(gameId) {
@@ -1569,7 +1687,6 @@ export async function fetchYachaGame(gameId) {
 export function subscribeYachaGame(gameId, onChange) {
   return onSnapshot(doc(db, 'yachaGames', gameId), (snap) => onChange(snap.exists() ? mapYacha(gameId, snap.data()) : null));
 }
-// 신청: 둘 중 한 명만 야차권을 가지고 있어도 신청·진행 가능 (소모는 수락 시 한 장)
 // 익명 게시판이므로 야차 진행 과정은 실명이 아니라 보낸 사람 기준(나/상대방)으로만 보이는
 // 평범한 채팅 메시지로 남김 — 기존 채팅 메시지와 동일한 형태(type:'text')라 추가 렌더링 코드가 필요 없음
 async function postYachaChatMessage(roomId, senderId, text) {
@@ -1579,53 +1696,59 @@ async function postYachaChatMessage(roomId, senderId, text) {
     await touchRoom(roomId, text, roomSnap.exists() ? roomSnap.data() : null);
   } catch (e) { /* best-effort: 기록 실패해도 게임 진행에는 영향 없음 */ }
 }
-function fmtYachaBetShort(b) {
-  const parts = [];
-  if (b?.points) parts.push(`${b.points}P`);
-  (b?.items || []).forEach((it) => parts.push(`${it.name} x${it.qty}`));
-  return parts.length ? parts.join(', ') : '0P';
-}
-// 신청: 같은 방에 진행 중인 야차만 없으면 되고, 다른 방이면 동시에 여러 개 진행 가능 (같은 상대와도 방이 다르면 여러 개 가능)
+// 신청: 둘 중 한 명만 야차권을 가지고 있어도 신청·진행 가능 (소모는 수락 시 한 장).
+// 체력이 전투 사이에 그대로 이어지는 개인 자원이라 한 사람이 동시에 여러 전투를 열면 꼬이므로,
+// 신청 시점부터 한 사람은 하나의 야차에만 참여할 수 있게 막아요 (battleActiveGameId).
 export async function requestYacha(roomId) {
   const me = uid();
   const roomRef = doc(db, 'chatRooms', roomId);
-  const roomSnap = await getDoc(roomRef);
-  if (!roomSnap.exists()) throw new Error('채팅방을 찾을 수 없습니다.');
-  const r = roomSnap.data();
-  if (r.yachaActive) throw new Error('이 채팅방에는 이미 진행 중인 야차가 있습니다.');
-  const other = r.userA === me ? r.userB : r.userA;
-  const [mySnap, otherSnap] = await Promise.all([getDoc(doc(db, 'users', me)), getDoc(doc(db, 'users', other))]);
-  if ((mySnap.data()?.yachaTicket || 0) < 1 && (otherSnap.data()?.yachaTicket || 0) < 1) throw new Error('둘 중 한 명은 야차권이 있어야 신청할 수 있습니다.');
   const gameRef = doc(collection(db, 'yachaGames'));
-  await setDoc(gameRef, {
-    roomId, userA: me, userB: other, status: 'pending', requestedBy: me, round: 1,
-    bets: {}, wins: {}, pot: { points: {}, items: {} }, choices: {}, nextRoundAgree: {}, lastActionAt: serverTimestamp(), createdAt: serverTimestamp(),
+  let other = null;
+  await runTransaction(db, async (tx) => {
+    const roomSnap = await tx.get(roomRef);
+    if (!roomSnap.exists()) throw new Error('채팅방을 찾을 수 없습니다.');
+    const r = roomSnap.data();
+    if (r.yachaActive) throw new Error('이 채팅방에는 이미 진행 중인 야차가 있습니다.');
+    other = r.userA === me ? r.userB : r.userA;
+    const meRef = doc(db, 'users', me); const otherRef = doc(db, 'users', other);
+    const [meSnap, otherSnap] = await Promise.all([tx.get(meRef), tx.get(otherRef)]);
+    if ((meSnap.data()?.yachaTicket || 0) < 1 && (otherSnap.data()?.yachaTicket || 0) < 1) throw new Error('둘 중 한 명은 야차권이 있어야 신청할 수 있습니다.');
+    if (meSnap.data()?.battleActiveGameId) throw new Error('이미 다른 야차 전투에 참여 중입니다.');
+    if (otherSnap.data()?.battleActiveGameId) throw new Error('상대가 이미 다른 야차 전투에 참여 중입니다.');
+    tx.set(gameRef, {
+      roomId, userA: me, userB: other, status: 'pending', requestedBy: me,
+      round: 1, hp: {}, actions: {}, lastActionAt: serverTimestamp(), createdAt: serverTimestamp(),
+    });
+    tx.update(roomRef, { yachaActive: true, activeYachaId: gameRef.id });
+    tx.update(meRef, { battleActiveGameId: gameRef.id });
+    tx.update(otherRef, { battleActiveGameId: gameRef.id });
   });
-  await updateDoc(roomRef, { yachaActive: true, activeYachaId: gameRef.id });
   await addDoc(collection(db, 'notifications'), { userId: other, type: 'chat_message', roomId, preview: '야차 신청이 왔습니다.', read: false, createdAt: serverTimestamp() });
   await postYachaChatMessage(roomId, me, '야차를 신청했습니다.');
   return gameRef.id;
 }
-async function endYachaGame(gameRef, roomRef, status) {
-  await updateDoc(gameRef, { status, lastActionAt: serverTimestamp() });
-  await updateDoc(roomRef, { yachaActive: false, activeYachaId: null });
-}
 export async function declineYacha(gameId) {
   const me = uid();
   const gameRef = doc(db, 'yachaGames', gameId);
-  const snap = await getDoc(gameRef);
-  if (!snap.exists()) return;
-  const g = snap.data();
-  await endYachaGame(gameRef, doc(db, 'chatRooms', g.roomId), 'declined');
-  await postYachaChatMessage(g.roomId, me, g.requestedBy === me ? '신청을 취소했습니다.' : '신청을 거절했습니다.');
+  let g = null;
+  await runTransaction(db, async (tx) => {
+    const gs = await tx.get(gameRef);
+    if (!gs.exists() || ['declined', 'ended', 'cancelled'].includes(gs.data().status)) return;
+    g = gs.data();
+    tx.update(gameRef, { status: 'declined', lastActionAt: serverTimestamp() });
+    tx.update(doc(db, 'chatRooms', g.roomId), { yachaActive: false, activeYachaId: null });
+    tx.update(doc(db, 'users', g.userA), { battleActiveGameId: null });
+    tx.update(doc(db, 'users', g.userB), { battleActiveGameId: null });
+  });
+  if (g) await postYachaChatMessage(g.roomId, me, g.requestedBy === me ? '신청을 취소했습니다.' : '신청을 거절했습니다.');
 }
-// 한 라운드 시작에 필요한 야차권 1장을 둘 중 가진 쪽에서 소모 (A 우선)
+// 한 전투 시작에 필요한 야차권 1장을 둘 중 가진 쪽에서 소모 (A 우선)
 function consumeOneTicket(tx, aRef, bRef, aTicket, bTicket) {
   if (aTicket >= 1) { tx.update(aRef, { yachaTicket: increment(-1) }); return; }
   if (bTicket >= 1) { tx.update(bRef, { yachaTicket: increment(-1) }); return; }
   throw new Error('야차권이 없습니다.');
 }
-// 수락: 둘 중 한 명의 야차권 1장을 소모하고 베팅 단계로 전환
+// 수락: 둘 중 한 명의 야차권 1장을 소모하고, 각자 직전 전투에서 이어지는 체력(없으면 100)으로 전투 시작
 export async function acceptYacha(gameId) {
   const me = uid();
   const gameRef = doc(db, 'yachaGames', gameId);
@@ -1639,232 +1762,225 @@ export async function acceptYacha(gameId) {
     const aTicket = as.data().yachaTicket || 0; const bTicket = bs.data().yachaTicket || 0;
     if (aTicket < 1 && bTicket < 1) throw new Error('둘 중 한 명은 야차권이 있어야 시작할 수 있습니다.');
     consumeOneTicket(tx, aRef, bRef, aTicket, bTicket);
+    const hpA = Number.isFinite(as.data().battleHp) ? as.data().battleHp : YACHA_BASE_HP;
+    const hpB = Number.isFinite(bs.data().battleHp) ? bs.data().battleHp : YACHA_BASE_HP;
     tx.update(gameRef, {
-      status: 'betting', bets: {}, choices: {}, nextRoundAgree: {}, result: null, lastActionAt: serverTimestamp(),
+      status: 'battling', round: 1, hp: { [g.userA]: hpA, [g.userB]: hpB }, actions: {},
+      buffs: { [g.userA]: {}, [g.userB]: {} }, result: null, lastActionAt: serverTimestamp(),
     });
   });
 }
-// 베팅 내용 입력(확정 전까지 자유롭게 수정 가능). 라운드마다 거는 금액에 제한 없음
-export async function setYachaBet(gameId, points, items) {
-  const me = uid();
-  const n = Math.max(0, parseInt(points, 10) || 0);
-  const gameRef = doc(db, 'yachaGames', gameId);
-  const gs = await getDoc(gameRef);
-  if (!gs.exists() || gs.data().status !== 'betting') throw new Error('지금은 베팅할 수 없습니다.');
-  if (gs.data().bets?.[me]?.confirmed) throw new Error('이미 확정했습니다.');
-  const mySnap = await getDoc(doc(db, 'users', me));
-  if (n > (mySnap.data().points || 0)) throw new Error('보유 포인트보다 많이 걸 수 없습니다.');
-  const bets = { ...(gs.data().bets || {}) };
-  bets[me] = { points: n, items: (items || []).map((it) => ({ id: it.id, name: it.name, description: it.description || '', qty: Math.max(1, parseInt(it.qty, 10) || 1) })), confirmed: false };
-  await updateDoc(gameRef, { bets, lastActionAt: serverTimestamp() });
+function rollDie(dieMax) { return 1 + Math.floor(Math.random() * dieMax); }
+function rollSuccess(chancePercent) { return Math.random() * 100 < chancePercent; }
+function actionLabelText(act) {
+  if (!act) return '';
+  if (act.action === 'item') return act.itemName || '아이템 사용';
+  return YACHA_ACTION_LABEL[act.action] || act.action;
 }
-// 베팅 확정: 포인트/소지품을 보관(에스크로) 상태로 가져감. 양쪽 다 확정되면 선택 단계로
-export async function confirmYachaBet(gameId) {
+function defaultYachaBuff() { return { halfDmgRounds: 0, atkBonus: 0, deathWard: false, guaranteedNext: false, pendingDamage: 0 }; }
+// 한 라운드를 해석하는 순수 함수(파이어스토어 접근 없음). 트랜잭션에서 필요한 읽기가 끝난 뒤 호출.
+// actA/actB: {action, itemId, itemName, subAction} / hp,buffsIn: {[uid]: ...} / settings: {dieMax, atkChance, defChance, healChance}
+function resolveYachaRound({ userA, userB, actions, hp, buffsIn, settings }) {
+  const { dieMax, atkChance, defChance, healChance } = settings;
+  const S = SKILL_NAMES;
+  const actA = actions[userA]; const actB = actions[userB];
+  const skillA = actA?.action === 'item' ? actA.itemName : null;
+  const skillB = actB?.action === 'item' ? actB.itemName : null;
+  const bA = { ...defaultYachaBuff(), ...(buffsIn[userA] || {}) };
+  const bB = { ...defaultYachaBuff(), ...(buffsIn[userB] || {}) };
+
+  // "이번 라운드 상대 행동을 강제로 방어로 고정" — 상대가 일반 행동(공격/방어/회복)일 때만 적용, 스킬 사용은 그대로 둠
+  let effA = actA?.action; let effB = actB?.action;
+  if (skillB === S.FORCE_DEFEND && effA !== 'item') effA = 'defend';
+  if (skillA === S.FORCE_DEFEND && effB !== 'item') effB = 'defend';
+
+  function rollFor(act, eff, skill, buff) {
+    const r = { atkOk: false, atk: 0, defOk: false, def: 0, healOk: false, heal: 0, selfDmg: 0 };
+    const guaranteed = buff.guaranteedNext;
+    if (skill === S.ATK_SURE) { r.atkOk = true; r.atk = rollDie(dieMax) + buff.atkBonus; }
+    else if (skill === S.ATK_D20_FIXED) { r.atkOk = true; r.atk = rollDie(20); }
+    else if (skill === S.SACRIFICE_ATK) { r.atkOk = true; r.atk = rollDie(20) + 5; r.selfDmg += 10; }
+    else if (skill === S.LIFESTEAL) { r.atkOk = guaranteed || rollSuccess(atkChance); if (r.atkOk) r.atk = rollDie(dieMax) + buff.atkBonus; }
+    else if (eff === 'attack') { r.atkOk = guaranteed || rollSuccess(atkChance); if (r.atkOk) r.atk = rollDie(dieMax) + buff.atkBonus; }
+
+    if (skill === S.DEF_SURE) { r.defOk = true; r.def = rollDie(dieMax); }
+    else if (eff === 'defend') { r.defOk = guaranteed || rollSuccess(defChance); if (r.defOk) r.def = rollDie(dieMax); }
+
+    if (skill === S.HEAL_D20) { r.healOk = true; r.heal = rollDie(20); }
+    else if (skill === S.HEAL_D30) { r.healOk = true; r.heal = rollDie(30); }
+    else if (eff === 'heal') { r.healOk = guaranteed || rollSuccess(healChance); if (r.healOk) r.heal = rollDie(dieMax); }
+
+    if (skill === S.ADVANTAGE && act.subAction === 'attack') { r.atkOk = guaranteed || rollSuccess(atkChance); if (r.atkOk) r.atk = Math.max(rollDie(dieMax), rollDie(dieMax)) + buff.atkBonus; }
+    if (skill === S.ADVANTAGE && act.subAction === 'heal') { r.healOk = guaranteed || rollSuccess(healChance); if (r.healOk) r.heal = Math.max(rollDie(dieMax), rollDie(dieMax)); }
+    if (skill === S.COIN) { if (Math.random() < 0.5) { r.healOk = true; r.heal = rollDie(20); } else { r.selfDmg += rollDie(20); } }
+    return r;
+  }
+  const rollA = rollFor(actA, effA, skillA, bA);
+  const rollB = rollFor(actB, effB, skillB, bB);
+  if (skillA === S.HEAL_NULLIFY) rollB.healOk = false;
+  if (skillB === S.HEAL_NULLIFY) rollA.healOk = false;
+
+  let dmgToA = Math.max(0, rollB.atk - rollA.def);
+  let dmgToB = Math.max(0, rollA.atk - rollB.def);
+  if (skillA === S.NULLIFY) dmgToA = 0;
+  if (skillB === S.NULLIFY) dmgToB = 0;
+  const halfActiveA = bA.halfDmgRounds > 0 || skillA === S.GUARD_HALF;
+  const halfActiveB = bB.halfDmgRounds > 0 || skillB === S.GUARD_HALF;
+  if (halfActiveA) dmgToA = Math.floor(dmgToA / 2);
+  if (halfActiveB) dmgToB = Math.floor(dmgToB / 2);
+  let deferOutA = 0; let deferOutB = 0;
+  if (skillA === S.DEFER_DMG) { deferOutA = dmgToA; dmgToA = 0; }
+  if (skillB === S.DEFER_DMG) { deferOutB = dmgToB; dmgToB = 0; }
+  dmgToA += bA.pendingDamage || 0;
+  dmgToB += bB.pendingDamage || 0;
+
+  let hpA2 = (hp[userA] ?? YACHA_BASE_HP) - dmgToA - (rollA.selfDmg || 0);
+  let hpB2 = (hp[userB] ?? YACHA_BASE_HP) - dmgToB - (rollB.selfDmg || 0);
+  if (hpA2 > 0 && rollA.healOk) hpA2 = Math.min(YACHA_BASE_HP, hpA2 + rollA.heal);
+  if (hpB2 > 0 && rollB.healOk) hpB2 = Math.min(YACHA_BASE_HP, hpB2 + rollB.heal);
+  if (hpA2 > 0 && skillA === S.LIFESTEAL && rollA.atkOk) hpA2 = Math.min(YACHA_BASE_HP, hpA2 + Math.floor(dmgToB / 2));
+  if (hpB2 > 0 && skillB === S.LIFESTEAL && rollB.atkOk) hpB2 = Math.min(YACHA_BASE_HP, hpB2 + Math.floor(dmgToA / 2));
+  if (hpA2 > 0 && skillA === DITTANY_NAME) hpA2 = Math.min(YACHA_BASE_HP, hpA2 + 10);
+  if (hpB2 > 0 && skillB === DITTANY_NAME) hpB2 = Math.min(YACHA_BASE_HP, hpB2 + 10);
+  if (skillA === S.SWAP_HP || skillB === S.SWAP_HP) { const t = hpA2; hpA2 = hpB2; hpB2 = t; }
+  hpA2 = Math.max(0, hpA2); hpB2 = Math.max(0, hpB2);
+
+  let newAtkBonusA = bA.atkBonus + (skillA === S.STRENGTH_POTION ? 5 : 0);
+  let newAtkBonusB = bB.atkBonus + (skillB === S.STRENGTH_POTION ? 5 : 0);
+  let newHalfA = skillA === S.GUARD_HALF ? 1 : Math.max(0, bA.halfDmgRounds - (bA.halfDmgRounds > 0 ? 1 : 0));
+  let newHalfB = skillB === S.GUARD_HALF ? 1 : Math.max(0, bB.halfDmgRounds - (bB.halfDmgRounds > 0 ? 1 : 0));
+  let newGuaranteedA = skillA === S.GUARANTEE_NEXT;
+  let newGuaranteedB = skillB === S.GUARANTEE_NEXT;
+  let newDeathWardA = skillA === S.DEATH_WARD ? true : bA.deathWard;
+  let newDeathWardB = skillB === S.DEATH_WARD ? true : bB.deathWard;
+  let deadA = hpA2 <= 0; let deadB = hpB2 <= 0;
+  if (deadA && newDeathWardA) { hpA2 = 1; deadA = false; newDeathWardA = false; }
+  if (deadB && newDeathWardB) { hpB2 = 1; deadB = false; newDeathWardB = false; }
+  if (skillA === S.COPY_BUFF) {
+    newHalfB = Math.max(newHalfB, newHalfA); newAtkBonusB = Math.max(newAtkBonusB, newAtkBonusA);
+    newGuaranteedB = newGuaranteedB || newGuaranteedA; newDeathWardB = newDeathWardB || newDeathWardA;
+  }
+  if (skillB === S.COPY_BUFF) {
+    newHalfA = Math.max(newHalfA, newHalfB); newAtkBonusA = Math.max(newAtkBonusA, newAtkBonusB);
+    newGuaranteedA = newGuaranteedA || newGuaranteedB; newDeathWardA = newDeathWardA || newDeathWardB;
+  }
+  return {
+    hpA: hpA2, hpB: hpB2, deadA, deadB, dmgToA, dmgToB,
+    buffs: {
+      [userA]: { halfDmgRounds: newHalfA, atkBonus: newAtkBonusA, deathWard: newDeathWardA, guaranteedNext: newGuaranteedA, pendingDamage: deferOutA },
+      [userB]: { halfDmgRounds: newHalfB, atkBonus: newAtkBonusB, deathWard: newDeathWardB, guaranteedNext: newGuaranteedB, pendingDamage: deferOutB },
+    },
+  };
+}
+// 공격/방어/회복/아이템 중 하나를 선택. 고른 순간엔 "행동을 선택했습니다."만 보이고,
+// 둘 다 고르면 그제서야 한 라운드가 한꺼번에 풀려서 결과가 공개됨
+export async function chooseYachaAction(gameId, action, itemId, subAction) {
+  if (!YACHA_ACTIONS.includes(action)) throw new Error('잘못된 행동입니다.');
+  if (action === 'item' && !itemId) throw new Error('사용할 아이템을 선택하세요.');
   const me = uid();
   const gameRef = doc(db, 'yachaGames', gameId);
-  let roomId = null; let betText = null;
+  const settings = await fetchYachaBattleSettings();
+  let roomId = null; let reveal = null; let ended = null;
   await runTransaction(db, async (tx) => {
     const gs = await tx.get(gameRef);
-    if (!gs.exists() || gs.data().status !== 'betting') throw new Error('지금은 확정할 수 없습니다.');
+    if (!gs.exists() || gs.data().status !== 'battling') throw new Error('지금은 행동할 수 없습니다.');
     const g = gs.data();
-    const myBet = g.bets?.[me];
-    if (!myBet) throw new Error('먼저 베팅 내용을 입력하세요.');
-    if (myBet.confirmed) return;
-    const userRef = doc(db, 'users', me);
-    const us = await tx.get(userRef);
-    const pts = us.data().points || 0;
-    if (pts < myBet.points) throw new Error('보유 포인트보다 많이 걸 수 없습니다.');
-    const itemRefs = myBet.items.map((it) => doc(db, 'users', me, 'items', it.id));
-    const itemSnaps = await Promise.all(itemRefs.map((ref) => tx.get(ref)));
-    myBet.items.forEach((it, i) => {
-      const s = itemSnaps[i];
-      if (!s.exists() || (s.data().qty || 0) < it.qty) throw new Error(`${it.name} 수량이 부족합니다.`);
-    });
-    tx.update(userRef, { points: pts - myBet.points });
-    itemSnaps.forEach((s, i) => {
-      const it = myBet.items[i]; const left = (s.data().qty || 0) - it.qty;
-      if (left <= 0) tx.delete(itemRefs[i]); else tx.update(itemRefs[i], { qty: left });
-    });
-    const bets = { ...g.bets, [me]: { ...myBet, confirmed: true } };
-    const other = g.userA === me ? g.userB : g.userA;
-    const patch = { bets, lastActionAt: serverTimestamp() };
-    if (bets[other]?.confirmed) { patch.status = 'choosing'; patch.choices = {}; }
-    tx.update(gameRef, patch);
-    roomId = g.roomId; betText = fmtYachaBetShort(myBet);
-  });
-  if (roomId) await postYachaChatMessage(roomId, me, `${betText} 배팅`);
-}
-// 이번 라운드에 건 것을 금고(누적 판돈)에 합쳐넣음 — 순수 계산, DB 접근 없음
-function foldBetsIntoPot(pot, bets, uidA, uidB) {
-  const nextPoints = { ...(pot.points || {}) };
-  const nextItems = {};
-  Object.keys(pot.items || {}).forEach((u) => { nextItems[u] = [...(pot.items[u] || [])]; });
-  [uidA, uidB].forEach((u) => {
-    const b = bets[u];
-    if (!b) return;
-    nextPoints[u] = (nextPoints[u] || 0) + (b.points || 0);
-    const list = nextItems[u] || [];
-    (b.items || []).forEach((it) => {
-      const idx = list.findIndex((x) => x.name === it.name && (x.description || '') === (it.description || ''));
-      if (idx >= 0) list[idx] = { ...list[idx], qty: list[idx].qty + it.qty };
-      else list.push({ name: it.name, description: it.description || '', qty: it.qty });
-    });
-    nextItems[u] = list;
-  });
-  return { points: nextPoints, items: nextItems };
-}
-// 라운드 정산: 즉시 지급하지 않고 이긴 쪽의 승수만 +1, 이번 라운드에 건 것은 금고에 누적 (쓰기만 수행, 읽기 없음)
-function settleYachaRound(tx, gameRef, g, winnerUid, choiceA, choiceB) {
-  const pot = foldBetsIntoPot(g.pot || { points: {}, items: {} }, g.bets || {}, g.userA, g.userB);
-  const wins = { ...(g.wins || {}) };
-  if (winnerUid) wins[winnerUid] = (wins[winnerUid] || 0) + 1;
-  const result = { choiceA, choiceB, winner: winnerUid, at: Date.now() };
-  tx.update(gameRef, { status: 'result', result, wins, pot, bets: {}, choices: {}, lastActionAt: serverTimestamp() });
-}
-// 금고 최종 정산을 위한 읽기 전용 단계 (승수가 더 많은 쪽이 전부 가져가고, 동률이면 각자 건 만큼 돌려받음)
-async function readPotFinalizeOps(tx, g) {
-  const pot = g.pot || { points: {}, items: {} };
-  const wins = g.wins || {};
-  const winsA = wins[g.userA] || 0; const winsB = wins[g.userB] || 0;
-  const winnerUid = winsA === winsB ? null : (winsA > winsB ? g.userA : g.userB);
-  const totalPointsA = pot.points?.[g.userA] || 0; const totalPointsB = pot.points?.[g.userB] || 0;
-  const itemsA = pot.items?.[g.userA] || []; const itemsB = pot.items?.[g.userB] || [];
-  if (winnerUid) {
-    const winnerRef = doc(db, 'users', winnerUid);
-    const winnerSnap = await tx.get(winnerRef);
-    const itemOps = [];
-    for (const it of [...itemsA, ...itemsB]) {
-      const ref = doc(db, 'users', winnerUid, 'items', itemKey(it.name, it.description));
-      // eslint-disable-next-line no-await-in-loop
-      const s = await tx.get(ref);
-      itemOps.push({ ref, exists: s.exists(), qty: s.exists() ? s.data().qty || 0 : 0, it });
-    }
-    return { mode: 'winner', winnerRef, winnerBal: winnerSnap.data().points || 0, totalPoints: totalPointsA + totalPointsB, itemOps };
-  }
-  const aRef = doc(db, 'users', g.userA); const bRef = doc(db, 'users', g.userB);
-  const [as, bs] = await Promise.all([tx.get(aRef), tx.get(bRef)]);
-  const itemOpsA = []; const itemOpsB = [];
-  for (const it of itemsA) {
-    const ref = doc(db, 'users', g.userA, 'items', itemKey(it.name, it.description));
-    // eslint-disable-next-line no-await-in-loop
-    const s = await tx.get(ref);
-    itemOpsA.push({ ref, exists: s.exists(), qty: s.exists() ? s.data().qty || 0 : 0, it });
-  }
-  for (const it of itemsB) {
-    const ref = doc(db, 'users', g.userB, 'items', itemKey(it.name, it.description));
-    // eslint-disable-next-line no-await-in-loop
-    const s = await tx.get(ref);
-    itemOpsB.push({ ref, exists: s.exists(), qty: s.exists() ? s.data().qty || 0 : 0, it });
-  }
-  return { mode: 'tie', aRef, bRef, aBal: as.data().points || 0, bBal: bs.data().points || 0, totalPointsA, totalPointsB, itemOpsA, itemOpsB };
-}
-// 금고 최종 정산의 쓰기 전용 단계 (readPotFinalizeOps 결과를 그대로 적용)
-function writePotFinalizeOps(tx, ops) {
-  if (ops.mode === 'winner') {
-    if (ops.totalPoints > 0) tx.update(ops.winnerRef, { points: ops.winnerBal + ops.totalPoints });
-    ops.itemOps.forEach(({ ref, exists, qty, it }) => {
-      if (exists) tx.update(ref, { qty: qty + it.qty });
-      else tx.set(ref, { name: it.name, description: it.description || '', qty: it.qty, createdAt: serverTimestamp() });
-    });
-    return;
-  }
-  if (ops.totalPointsA > 0) tx.update(ops.aRef, { points: ops.aBal + ops.totalPointsA });
-  if (ops.totalPointsB > 0) tx.update(ops.bRef, { points: ops.bBal + ops.totalPointsB });
-  ops.itemOpsA.forEach(({ ref, exists, qty, it }) => {
-    if (exists) tx.update(ref, { qty: qty + it.qty });
-    else tx.set(ref, { name: it.name, description: it.description || '', qty: it.qty, createdAt: serverTimestamp() });
-  });
-  ops.itemOpsB.forEach(({ ref, exists, qty, it }) => {
-    if (exists) tx.update(ref, { qty: qty + it.qty });
-    else tx.set(ref, { name: it.name, description: it.description || '', qty: it.qty, createdAt: serverTimestamp() });
-  });
-}
-// 가위바위보 선택 제출. 고른 순간엔 "행동을 선택했습니다."만 보이고, 둘 다 내면 그제서야 실제로 낸 것이 바로 공개됨
-export async function chooseYacha(gameId, choice) {
-  if (!['rock', 'paper', 'scissors'].includes(choice)) throw new Error('잘못된 선택입니다.');
-  const me = uid();
-  const gameRef = doc(db, 'yachaGames', gameId);
-  let roomId = null; let revealInfo = null;
-  await runTransaction(db, async (tx) => {
-    const gs = await tx.get(gameRef);
-    if (!gs.exists() || gs.data().status !== 'choosing') throw new Error('지금은 낼 수 없습니다.');
-    const g = gs.data();
-    if (g.choices?.[me]) throw new Error('이미 냈습니다.');
+    if (g.actions?.[me]) throw new Error('이미 행동을 선택했습니다.');
     roomId = g.roomId;
     const other = g.userA === me ? g.userB : g.userA;
-    const choices = { ...(g.choices || {}), [me]: choice };
-    if (!choices[other]) { tx.update(gameRef, { choices, lastActionAt: serverTimestamp() }); return; }
-    const choiceA = choices[g.userA]; const choiceB = choices[g.userB];
-    const w = rpsWinner(choiceA, choiceB);
-    const winnerUid = w === 'A' ? g.userA : w === 'B' ? g.userB : null;
-    settleYachaRound(tx, gameRef, g, winnerUid, choiceA, choiceB);
-    revealInfo = { userA: g.userA, userB: g.userB, choiceA, choiceB };
+    const myItemRef = action === 'item' ? doc(db, 'users', me, 'items', itemId) : null;
+    const myItemSnap = myItemRef ? await tx.get(myItemRef) : null;
+    if (action === 'item') {
+      if (!myItemSnap.exists() || (myItemSnap.data().qty || 0) < 1) throw new Error('보유하지 않은 아이템입니다.');
+    }
+    const itemName = myItemSnap ? myItemSnap.data().name : null;
+    if (SKILL_NEEDS_SUBACTION.includes(itemName) && !subAction) throw new Error('함께 선택할 행동을 골라주세요.');
+    const myAct = { action, itemId: itemId || null, itemName, subAction: subAction || null };
+    const actions = { ...(g.actions || {}), [me]: myAct };
+    if (!actions[other]) { tx.update(gameRef, { actions, lastActionAt: serverTimestamp() }); return; }
+
+    // 둘 다 골랐으면 한 라운드를 한꺼번에 해석
+    const actA = actions[g.userA]; const actB = actions[g.userB];
+    // 상대가 이번 라운드에 아이템을 썼다면 그 아이템도 여기서 함께 확인/소모해야 함
+    const otherAct = g.userA === me ? actB : actA;
+    let otherItemSnap = null; let otherItemRef2 = null;
+    if (otherAct?.action === 'item' && otherAct.itemId) {
+      otherItemRef2 = doc(db, 'users', other, 'items', otherAct.itemId);
+      otherItemSnap = await tx.get(otherItemRef2);
+      if (!otherItemSnap.exists() || (otherItemSnap.data().qty || 0) < 1) throw new Error('상대 아이템 정보를 확인할 수 없습니다.');
+    }
+
+    const hp = g.hp || {};
+    const buffsIn = g.buffs || {};
+    const r = resolveYachaRound({ userA: g.userA, userB: g.userB, actions, hp, buffsIn, settings });
+
+    // 이번 라운드에 쓴 아이템은 여기서 함께 소모 (내 것/상대 것)
+    function consumeItem(itemRef, itemSnap) {
+      if (!itemRef || !itemSnap) return;
+      const left = (itemSnap.data().qty || 0) - 1;
+      if (left <= 0) tx.delete(itemRef); else tx.update(itemRef, { qty: left });
+    }
+    if (actA?.action === 'item') consumeItem(g.userA === me ? myItemRef : otherItemRef2, g.userA === me ? myItemSnap : otherItemSnap);
+    if (actB?.action === 'item') consumeItem(g.userB === me ? myItemRef : otherItemRef2, g.userB === me ? myItemSnap : otherItemSnap);
+
+    reveal = { userA: g.userA, userB: g.userB, actA, actB, dmgA: r.dmgToA, dmgB: r.dmgToB };
+
+    if (r.deadA || r.deadB) {
+      const aRef = doc(db, 'users', g.userA); const bRef = doc(db, 'users', g.userB);
+      if (r.deadA && r.deadB) {
+        tx.update(aRef, { battleHp: YACHA_BASE_HP, battleActiveGameId: null });
+        tx.update(bRef, { battleHp: YACHA_BASE_HP, battleActiveGameId: null });
+        ended = { type: 'draw' };
+      } else if (r.deadA) {
+        tx.update(aRef, { battleHp: YACHA_BASE_HP, battlePoints: increment(-1), battleActiveGameId: null });
+        tx.update(bRef, { battleHp: r.hpB, battlePoints: increment(1), battleActiveGameId: null });
+        ended = { type: 'death', loser: g.userA, winner: g.userB };
+      } else {
+        tx.update(bRef, { battleHp: YACHA_BASE_HP, battlePoints: increment(-1), battleActiveGameId: null });
+        tx.update(aRef, { battleHp: r.hpA, battlePoints: increment(1), battleActiveGameId: null });
+        ended = { type: 'death', loser: g.userB, winner: g.userA };
+      }
+      tx.update(doc(db, 'chatRooms', g.roomId), { yachaActive: false, activeYachaId: null });
+      tx.update(gameRef, { status: 'ended', hp: { [g.userA]: r.hpA, [g.userB]: r.hpB }, result: ended, lastActionAt: serverTimestamp() });
+    } else {
+      tx.update(gameRef, {
+        hp: { [g.userA]: r.hpA, [g.userB]: r.hpB }, buffs: r.buffs, actions: {}, round: (g.round || 1) + 1, lastActionAt: serverTimestamp(),
+      });
+    }
   });
   if (roomId) await postYachaChatMessage(roomId, me, '행동을 선택했습니다.');
-  if (revealInfo) {
-    await postYachaChatMessage(roomId, revealInfo.userA, rpsLabel(revealInfo.choiceA));
-    await postYachaChatMessage(roomId, revealInfo.userB, rpsLabel(revealInfo.choiceB));
+  if (reveal) {
+    const dmgTextA = reveal.dmgA > 0 ? ` (피해 ${reveal.dmgA})` : '';
+    const dmgTextB = reveal.dmgB > 0 ? ` (피해 ${reveal.dmgB})` : '';
+    await postYachaChatMessage(roomId, reveal.userA, `${actionLabelText(reveal.actA)}${dmgTextA}`);
+    await postYachaChatMessage(roomId, reveal.userB, `${actionLabelText(reveal.actB)}${dmgTextB}`);
+  }
+  if (ended) {
+    const text = ended.type === 'draw' ? '두 사람 모두 체력이 0이 되어 무승부로 전투가 종료되었습니다.' : '체력이 0이 되어 전투가 종료되었습니다.';
+    await postYachaChatMessage(roomId, null, text);
   }
 }
-// 다음 라운드 동의/거절 (계속하려면 둘 중 한 명의 야차권 1장이 더 필요). 더 못 이어가면 그동안 쌓인 금고를 최종 정산
-export async function agreeYachaNextRound(gameId) {
+// 항복: 즉시 종료되며 체력은 그대로 다음 전투로 이어짐(사망이 아니므로 초기화하지 않음)
+export async function surrenderYacha(gameId) {
   const me = uid();
   const gameRef = doc(db, 'yachaGames', gameId);
   let roomId = null;
   await runTransaction(db, async (tx) => {
     const gs = await tx.get(gameRef);
-    if (!gs.exists() || gs.data().status !== 'result') throw new Error('지금은 동의할 수 없습니다.');
+    if (!gs.exists() || gs.data().status !== 'battling') throw new Error('지금은 항복할 수 없습니다.');
     const g = gs.data();
     roomId = g.roomId;
-    const agree = { ...(g.nextRoundAgree || {}), [me]: true };
     const other = g.userA === me ? g.userB : g.userA;
-    const roomRef = doc(db, 'chatRooms', g.roomId);
-    if (!agree[other]) { tx.update(gameRef, { nextRoundAgree: agree, lastActionAt: serverTimestamp() }); return; }
-    if (g.round >= YACHA_MAX_ROUNDS) {
-      const ops = await readPotFinalizeOps(tx, g);
-      writePotFinalizeOps(tx, ops);
-      tx.update(gameRef, { status: 'ended', lastActionAt: serverTimestamp() });
-      tx.update(roomRef, { yachaActive: false, activeYachaId: null });
-      return;
-    }
-    const aRef = doc(db, 'users', g.userA); const bRef = doc(db, 'users', g.userB);
-    const [as, bs] = await Promise.all([tx.get(aRef), tx.get(bRef)]);
-    const aTicket = as.data().yachaTicket || 0; const bTicket = bs.data().yachaTicket || 0;
-    if (aTicket < 1 && bTicket < 1) {
-      const ops = await readPotFinalizeOps(tx, g);
-      writePotFinalizeOps(tx, ops);
-      tx.update(gameRef, { status: 'ended', lastActionAt: serverTimestamp() });
-      tx.update(roomRef, { yachaActive: false, activeYachaId: null });
-      return;
-    }
-    consumeOneTicket(tx, aRef, bRef, aTicket, bTicket);
-    tx.update(gameRef, {
-      status: 'betting', round: (g.round || 1) + 1, bets: {}, choices: {}, nextRoundAgree: {}, result: null, lastActionAt: serverTimestamp(),
-    });
+    const hp = g.hp || {};
+    tx.update(doc(db, 'users', me), { battleHp: hp[me] ?? YACHA_BASE_HP, battleActiveGameId: null });
+    tx.update(doc(db, 'users', other), { battleHp: hp[other] ?? YACHA_BASE_HP, battlePoints: increment(1), battleActiveGameId: null });
+    tx.update(doc(db, 'chatRooms', g.roomId), { yachaActive: false, activeYachaId: null });
+    tx.update(gameRef, { status: 'ended', result: { type: 'surrender', loser: me, winner: other }, lastActionAt: serverTimestamp() });
   });
-  if (roomId) await postYachaChatMessage(roomId, me, '계속하기');
+  if (roomId) await postYachaChatMessage(roomId, me, '항복했습니다.');
 }
-// 종료 선택: 그동안 쌓인 금고를 최종 정산하고 끝냄
-export async function declineYachaNextRound(gameId) {
-  const me = uid();
-  const gameRef = doc(db, 'yachaGames', gameId);
-  let roomId = null;
-  await runTransaction(db, async (tx) => {
-    const gs = await tx.get(gameRef);
-    if (!gs.exists()) return;
-    const g = gs.data();
-    roomId = g.roomId;
-    const roomRef = doc(db, 'chatRooms', g.roomId);
-    const ops = await readPotFinalizeOps(tx, g);
-    writePotFinalizeOps(tx, ops);
-    tx.update(gameRef, { status: 'ended', lastActionAt: serverTimestamp() });
-    tx.update(roomRef, { yachaActive: false, activeYachaId: null });
-  });
-  if (roomId) await postYachaChatMessage(roomId, me, '종료하기');
-}
-// 비활성 처리: 상대가 응답할 차례인데 설정된 시간 동안 아무 반응이 없으면 기권 처리
+// 비활성 처리: 상대가 응답할 차례인데 설정된 시간 동안 아무 반응이 없으면 자동 처리
 export async function checkYachaTimeout(gameId) {
-  const me = uid();
   const gameRef = doc(db, 'yachaGames', gameId);
   const timeoutMs = await fetchYachaTimeoutMs();
   let acted = false;
@@ -1875,61 +1991,28 @@ export async function checkYachaTimeout(gameId) {
     const g = gs.data();
     const elapsed = Date.now() - (g.lastActionAt ? g.lastActionAt.toMillis() : Date.now());
     if (elapsed < timeoutMs) return;
-    const other = g.userA === me ? g.userB : g.userA;
     const roomRef = doc(db, 'chatRooms', g.roomId);
+    const aRef = doc(db, 'users', g.userA); const bRef = doc(db, 'users', g.userB);
     if (g.status === 'pending') {
       tx.update(gameRef, { status: 'declined', lastActionAt: serverTimestamp() });
       tx.update(roomRef, { yachaActive: false, activeYachaId: null });
+      tx.update(aRef, { battleActiveGameId: null }); tx.update(bRef, { battleActiveGameId: null });
       acted = true; endedRoomId = g.roomId; endedText = '야차 신청이 종료되었습니다.';
       return;
     }
-    if (g.status === 'betting') {
-      const bets = g.bets || {};
-      if (!bets[other]?.confirmed) {
-        // 내가 확정했는데 상대가 응답 없으면: 이번 라운드(미완료)의 베팅만 나에게 환불하고, 그동안 쌓인 금고는 최종 정산
-        let refund = null;
-        if (bets[me]?.confirmed) {
-          const ref = doc(db, 'users', me);
-          const us = await tx.get(ref);
-          const itemReads = [];
-          for (const it of bets[me].items || []) {
-            const iref = doc(db, 'users', me, 'items', itemKey(it.name, it.description));
-            // eslint-disable-next-line no-await-in-loop
-            const is = await tx.get(iref);
-            itemReads.push({ iref, exists: is.exists(), qty: is.exists() ? is.data().qty || 0 : 0, it });
-          }
-          refund = { ref, bal: us.data().points || 0, itemReads };
-        }
-        const potOps = await readPotFinalizeOps(tx, g);
-        if (refund) {
-          tx.update(refund.ref, { points: refund.bal + (bets[me].points || 0) });
-          refund.itemReads.forEach(({ iref, exists, qty, it }) => {
-            if (exists) tx.update(iref, { qty: qty + it.qty });
-            else tx.set(iref, { name: it.name, description: it.description || '', qty: it.qty, createdAt: serverTimestamp() });
-          });
-        }
-        writePotFinalizeOps(tx, potOps);
-        tx.update(gameRef, { status: 'ended', lastActionAt: serverTimestamp() });
-        tx.update(roomRef, { yachaActive: false, activeYachaId: null });
-        acted = true; endedRoomId = g.roomId; endedText = '야차가 종료되었습니다.';
-      }
-      return;
-    }
-    if (g.status === 'choosing' && !(g.choices || {})[other]) {
-      // 상대가 안 냈으면 기권패 처리: 상대는 패배(가위바위보 선택 없음으로 간주). 내가 낸 것은 이미 그때 메시지로 남아있음
-      const myChoice = (g.choices || {})[me] || 'rock';
-      const choiceA = g.userA === me ? myChoice : null;
-      const choiceB = g.userB === me ? myChoice : null;
-      settleYachaRound(tx, gameRef, g, me, choiceA, choiceB);
-      acted = true; endedRoomId = g.roomId; endedText = '시간 초과로 라운드가 자동 처리되었습니다.';
-      return;
-    }
-    if (g.status === 'result' && !(g.nextRoundAgree || {})[other]) {
-      const potOps = await readPotFinalizeOps(tx, g);
-      writePotFinalizeOps(tx, potOps);
-      tx.update(gameRef, { status: 'ended', lastActionAt: serverTimestamp() });
+    if (g.status === 'battling') {
+      const acts = g.actions || {};
+      const aActed = !!acts[g.userA]; const bActed = !!acts[g.userB];
+      if (aActed && bActed) return; // 둘 다 골랐다면 보통 바로 처리되므로 그대로 둠
+      if (!aActed && !bActed) return; // 아직 아무도 행동하지 않았다면 기다림
+      const hp = g.hp || {};
+      const loserUid = aActed ? g.userB : g.userA;
+      const winnerUid = aActed ? g.userA : g.userB;
+      tx.update(doc(db, 'users', loserUid), { battleHp: hp[loserUid] ?? YACHA_BASE_HP, battleActiveGameId: null });
+      tx.update(doc(db, 'users', winnerUid), { battleHp: hp[winnerUid] ?? YACHA_BASE_HP, battlePoints: increment(1), battleActiveGameId: null });
       tx.update(roomRef, { yachaActive: false, activeYachaId: null });
-      acted = true; endedRoomId = g.roomId; endedText = '시간 초과로 종료되었습니다.';
+      tx.update(gameRef, { status: 'ended', result: { type: 'timeout', loser: loserUid, winner: winnerUid }, lastActionAt: serverTimestamp() });
+      acted = true; endedRoomId = g.roomId; endedText = '시간 초과로 전투가 종료되었습니다.';
     }
   });
   if (endedRoomId) await postYachaChatMessage(endedRoomId, null, endedText);

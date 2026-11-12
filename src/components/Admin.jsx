@@ -4,9 +4,61 @@ import { MembersSection } from './AdminMembers';
 import { ContentSection } from './AdminContent';
 import { DigAdmin, DigLogsAdmin, ItemLogsAdmin } from './AdminDig';
 import { GambleAdmin, ChatAdmin } from './AdminLogs';
-import { PointSettingsCard, GalleonRateCard, GambleOddsCard, GambleMaxPointsCard, VoidPriceCard, YachaTimeoutCard, ShopAdmin } from './AdminShop';
-import { adminResetAllPointsAndItems } from '../lib/api';
+import { PointSettingsCard, GalleonRateCard, GambleOddsCard, GambleMaxPointsCard, VoidPriceCard, YachaTimeoutCard, YachaBattleSettingsCard, ShopAdmin } from './AdminShop';
+import { adminResetAllPointsAndItems, adminResetSelected, aggregateBattlePointsByFaction } from '../lib/api';
 import { AdminCard } from './Ui';
+
+function SelectiveResetCard() {
+  const [opt, setOpt] = useState({ points: false, items: false, notes: false, galleon: false, digTicket: false, gambleVoid: false, yachaTicket: false, battle: false });
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const FIELDS = [
+    ['points', '포인트'], ['items', '소지품'], ['notes', '개인 기재'], ['galleon', '갈레온'],
+    ['digTicket', '조사권(보너스)'], ['gambleVoid', '도박 무효권'], ['yachaTicket', '야차권'], ['battle', '전투 체력·점수'],
+  ];
+  const any = Object.values(opt).some(Boolean);
+  function toggle(k) { setOpt((o) => ({ ...o, [k]: !o[k] })); }
+  async function doReset() {
+    if (!any) return;
+    const labels = FIELDS.filter(([k]) => opt[k]).map(([, l]) => l).join(', ');
+    if (!window.confirm(`선택한 항목(${labels})을 모든 회원 대상으로 초기화합니다.\n정말 초기화할까요?`)) return;
+    const typed = window.prompt('되돌릴 수 없어요. 계속하려면 "초기화"를 입력하세요.');
+    if (typed !== '초기화') return;
+    setBusy(true); setMsg('');
+    try {
+      const n = await adminResetSelected(opt);
+      setMsg(`${n}명을 대상으로 초기화했습니다.`);
+    } catch (e) { setMsg(e.message || '오류가 발생했습니다.'); }
+    finally { setBusy(false); }
+  }
+  return (
+    <AdminCard title="선택 항목 전체 초기화" hint="체크한 항목만 모든 회원을 대상으로 초기화해요. 개인 기재·갈레온·조사권·야차권·전투 체력·점수도 포함할 수 있어요. 되돌릴 수 없어요.">
+      <div className="a-form-row" style={{ flexWrap: 'wrap', gap: '10px 16px' }}>
+        {FIELDS.map(([k, label]) => (
+          <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+            <input type="checkbox" checked={opt[k]} onChange={() => toggle(k)} />{label}
+          </label>
+        ))}
+      </div>
+      <button className="a-btn danger big" style={{ marginTop: 10 }} disabled={busy || !any} onClick={doReset}>{busy ? '처리 중' : '선택 항목 초기화'}</button>
+      {msg && <div className="a-hint" style={{ marginTop: 8 }}>{msg}</div>}
+    </AdminCard>
+  );
+}
+
+function BattleFactionScoresCard({ allUsers }) {
+  const rows = aggregateBattlePointsByFaction(allUsers || []);
+  return (
+    <AdminCard title="기숙사별 야차 전투 점수 합계" hint="같은 기숙사 그룹(회귀 전/후 합산)에 속한 회원들의 전투 점수를 모두 더한 값이에요.">
+      <table className="a-table">
+        <thead><tr><th>기숙사</th><th>점수 합계</th></tr></thead>
+        <tbody>
+          {rows.map((r) => <tr key={r.id}><td>{r.name}</td><td>{r.total}</td></tr>)}
+        </tbody>
+      </table>
+    </AdminCard>
+  );
+}
 
 function DangerZoneCard() {
   const [busy, setBusy] = useState(false);
@@ -79,7 +131,10 @@ export default function Admin({ pendingUsers, allUsers, allPosts, allComments, r
           <GambleMaxPointsCard />
           <VoidPriceCard />
           <YachaTimeoutCard />
+          <YachaBattleSettingsCard />
+          <BattleFactionScoresCard allUsers={allUsers} />
           <DangerZoneCard />
+          <SelectiveResetCard />
         </>
       )}
     </>

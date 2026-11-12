@@ -224,6 +224,8 @@ body.dark .notif-row.unread:hover{background:#17574a;}
   .sidebar.open{transform:translateX(0);}
   .main{margin-left:0;}
   .bottom-input-bar{left:0;}
+  .yacha-panel.fixed-top{left:0;max-height:40vh;}
+  .chat-thread.with-yacha{padding-top:260px;}
   .bottom-input-bar .inner{padding:10px 12px;gap:6px;}
   .bottom-input-bar button{padding:0 14px;height:44px;font-size:12.5px;}
   .bottom-input-bar textarea{padding:11px 14px;font-size:14px;}
@@ -533,6 +535,20 @@ body.dark .a-nav button.on{background:var(--surface-3);}
 .yacha-btn{background:var(--surface-3);color:var(--text-mid);border:1px solid var(--border);}
 .yacha-btn:disabled{opacity:.5;}
 .yacha-panel{margin:10px 4px 14px;padding:14px;border-radius:12px;background:var(--surface);border:1px solid var(--border);}
+.yacha-panel.fixed-top{position:fixed;top:54px;left:208px;right:0;max-width:640px;margin:10px auto;max-height:46vh;overflow-y:auto;z-index:150;box-shadow:0 6px 20px rgba(0,0,0,.14);}
+.chat-thread.with-yacha{padding-top:230px;}
+.yacha-hp-row{display:flex;align-items:center;gap:8px;margin:4px 0;}
+.yacha-hp-label{width:64px;font-size:12px;color:var(--text-mid);flex-shrink:0;}
+.yacha-hp-bar{flex:1;height:10px;border-radius:6px;background:var(--surface-3);overflow:hidden;}
+.yacha-hp-fill{height:100%;background:var(--accent);border-radius:6px;transition:width .2s ease;}
+.yacha-action-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;}
+.yacha-action-row .a-btn{flex:1;min-width:64px;}
+.yacha-item-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;}
+.yacha-item-btn{display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:2px;max-width:220px;}
+.yacha-item-desc{font-size:11px;color:var(--text-light);white-space:normal;font-weight:400;}
+.a-table{width:100%;border-collapse:collapse;font-size:13px;}
+.a-table th,.a-table td{padding:8px 10px;border-bottom:1px solid var(--border);text-align:left;}
+.a-table th{color:var(--text-light);font-weight:600;}
 .yacha-title{font-weight:700;font-size:13.5px;margin-bottom:10px;color:var(--text);}
 .yacha-note{font-size:12.5px;color:var(--text-light);margin:4px 0;}
 .yacha-note.ok{color:var(--accent);}

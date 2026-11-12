@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   fetchPointSettings, savePointSettings, fetchGalleonRate, saveGalleonRate, fetchGambleOdds, saveGambleOdds,
   fetchGambleMaxPoints, saveGambleMaxPoints, fetchVoidTiers, saveVoidTiers,
-  fetchYachaTimeoutMs, saveYachaTimeoutMs, subscribeShop, saveShopItem, deleteShopItem,
+  fetchYachaTimeoutMs, saveYachaTimeoutMs, fetchYachaBattleSettings, saveYachaBattleSettings, subscribeShop, saveShopItem, deleteShopItem,
   setShopDiscount, clearShopDiscount, discountActive, effectivePrice,
 } from '../lib/api';
 import { fmtRemain } from '../lib/helpers';
@@ -193,10 +193,52 @@ export function YachaTimeoutCard() {
     catch (e) { setErr(e.message); }
   }
   return (
-    <AdminCard title="야차 이탈 제한시간" hint="상대가 이 시간 동안 응답하지 않으면 기권 처리돼요. (신청 대기, 베팅 확정, 가위바위보 선택, 다음 라운드 동의 모두 동일하게 적용)">
+    <AdminCard title="야차 이탈 제한시간" hint="상대가 이 시간 동안 응답하지 않으면 자동 처리돼요. (신청 대기, 전투 중 행동 선택 모두 동일하게 적용)">
       <div className="a-form-row">
         <input className="txt-input" type="number" min="1" value={v} onChange={(e) => setV(e.target.value)} style={{ width: 100 }} /><span className="a-inline-note">분</span>
         <button className="a-btn accent big" disabled={v === saved} onClick={save}>저장</button>
+      </div>
+      {err && <div className="auth-error" style={{ marginBottom: 0 }}>{err}</div>}
+      {ok && <div className="auth-success" style={{ marginBottom: 0 }}>{ok}</div>}
+    </AdminCard>
+  );
+}
+
+// ---------------- 야차 전투 확률·주사위 설정 ----------------
+export function YachaBattleSettingsCard() {
+  const [v, setV] = useState(null);
+  const [saved, setSaved] = useState('');
+  const [err, setErr] = useState('');
+  const [ok, setOk] = useState('');
+  useEffect(() => {
+    fetchYachaBattleSettings().then((s) => {
+      const r = { atk: String(s.atkChance), def: String(s.defChance), heal: String(s.healChance), die: String(s.dieMax) };
+      setV(r); setSaved(JSON.stringify(r));
+    });
+  }, []);
+  if (!v) return null;
+  const change = (k) => (e) => setV({ ...v, [k]: e.target.value });
+  async function save() {
+    setErr(''); setOk('');
+    try {
+      await saveYachaBattleSettings({ atkChance: v.atk, defChance: v.def, healChance: v.heal, dieMax: v.die });
+      setSaved(JSON.stringify(v)); setOk('저장했습니다.');
+    } catch (e) { setErr(e.message); }
+  }
+  return (
+    <AdminCard title="야차 전투 확률 · 주사위" hint="공격/방어/회복이 각각 성공할 확률(%)과, 성공 시 수치를 정하는 주사위의 최대값이에요. 기본은 50%, 1d20입니다.">
+      <div className="a-form-row">
+        <span className="a-inline-note">공격 성공률</span><input className="txt-input" type="number" min="0" max="100" value={v.atk} onChange={change('atk')} style={{ width: 70 }} /><span className="a-inline-note">%</span>
+      </div>
+      <div className="a-form-row">
+        <span className="a-inline-note">방어 성공률</span><input className="txt-input" type="number" min="0" max="100" value={v.def} onChange={change('def')} style={{ width: 70 }} /><span className="a-inline-note">%</span>
+      </div>
+      <div className="a-form-row">
+        <span className="a-inline-note">회복 성공률</span><input className="txt-input" type="number" min="0" max="100" value={v.heal} onChange={change('heal')} style={{ width: 70 }} /><span className="a-inline-note">%</span>
+      </div>
+      <div className="a-form-row">
+        <span className="a-inline-note">주사위 (1d_)</span><input className="txt-input" type="number" min="1" value={v.die} onChange={change('die')} style={{ width: 70 }} />
+        <button className="a-btn accent big" disabled={JSON.stringify(v) === saved} onClick={save}>저장</button>
       </div>
       {err && <div className="auth-error" style={{ marginBottom: 0 }}>{err}</div>}
       {ok && <div className="auth-success" style={{ marginBottom: 0 }}>{ok}</div>}

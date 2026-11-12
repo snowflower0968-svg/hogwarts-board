@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   fetchDigRewards, saveDigReward, deleteDigReward, subscribeDigPublic, subscribeDigSecret,
   adminNewRound, adminAssignCell, adminRandomizeUndug, fetchDigLogs, fetchDigConfig, saveDigConfig,
-  fetchItemLogs, deleteDigLogs, deleteItemLogs,
+  fetchItemLogs, deleteDigLogs, deleteItemLogs, adminSeedYachaSkills,
   blankCountFor, DIG_SIZE,
 } from '../lib/api';
 import { fmtDateTime } from '../lib/helpers';
@@ -104,6 +104,13 @@ export function DigAdmin() {
     setErr(''); setOk('');
     try { await fn(); if (msg) setOk(msg); } catch (e) { setErr(e.message || '오류가 발생했습니다.'); }
   }
+  async function seedSkills() {
+    await run(async () => {
+      const n = await adminSeedYachaSkills();
+      await loadRewards();
+      setOk(n > 0 ? `${n}개를 새로 등록했습니다. (확률 10%로 추가되니 필요하면 조정하세요)` : '이미 모두 등록되어 있습니다.');
+    });
+  }
   async function addReward(e) {
     e.preventDefault();
     await run(async () => {
@@ -136,6 +143,9 @@ export function DigAdmin() {
       </AdminCard>
 
       <AdminCard title={`보상 목록 (${usable.length})`} hint="꽝을 뺀 나머지 칸에 아래 확률대로 배치돼요. 확률은 서로의 비율이라 합이 100이 아니어도 괜찮아요.">
+        <div className="a-form-row">
+          <button className="a-btn" onClick={seedSkills}>디터니·스킬 1~19 일괄 등록</button>
+        </div>
         {rewards.length === 0 && <div className="a-empty">등록된 보상이 없습니다.</div>}
         {rewards.map((r) => <RewardRow key={r.id} r={r} sharePct={share(r)} onChanged={loadRewards} />)}
         <form className="a-add" onSubmit={addReward}>
