@@ -1603,6 +1603,7 @@ export const YACHA_ACTIONS = ['attack', 'defend', 'heal', 'item'];
 export const YACHA_ACTION_LABEL = { attack: '공격', defend: '방어', heal: '회복' };
 export const YACHA_BASE_HP = 100;
 export const DITTANY_NAME = '디터니';
+export const MYRTLAP_NAME = '머틀랩 촉수 진액';
 // 간이 조사로 주울 수 있는 스킬(=소지품) 이름. "스킬1"~"스킬19"라는 이름 자체로 효과를 인식하고,
 // 실제 설명은 SKILL_DESCRIPTIONS에 적어서 간이 조사 보상 등록 시 description으로 함께 들어감(adminSeedYachaSkills).
 export const SKILL_NAMES = {
@@ -1660,7 +1661,10 @@ export const NULLIFY_SKILL_NAME = SKILL_NAMES.NULLIFY; // 하위 호환용 별�
 export async function adminSeedYachaSkills() {
   const existing = await fetchDigRewards();
   const existingNames = new Set(existing.map((r) => r.name));
-  const toAdd = [{ name: DITTANY_NAME, description: '먹으면 체력이 주사위만큼 회복됩니다(최대 100, 주사위 크기는 관리자가 설정). 전투 탭에서도 사용할 수 있습니다.' }];
+  const toAdd = [
+    { name: DITTANY_NAME, description: '먹으면 체력이 주사위만큼 회복됩니다(최대 100, 주사위 크기는 관리자가 설정). 전투 탭에서도 사용할 수 있습니다.' },
+    { name: MYRTLAP_NAME, description: '먹으면 체력이 1d5만큼 회복됩니다(최대 100). 전투 탭에서도 사용할 수 있습니다.' },
+  ];
   Object.values(SKILL_NAMES).forEach((name) => { toAdd.push({ name, description: SKILL_DESCRIPTIONS[name] || '' }); });
   let count = 0;
   for (const item of toAdd) {
@@ -1805,6 +1809,7 @@ export async function acceptYacha(gameId) {
     consumeOneTicket(tx, aRef, bRef, aTicket, bTicket);
     const hpA = Number.isFinite(as.data().battleHp) ? as.data().battleHp : YACHA_BASE_HP;
     const hpB = Number.isFinite(bs.data().battleHp) ? bs.data().battleHp : YACHA_BASE_HP;
+    if (hpA <= 0 || hpB <= 0) throw new Error('체력이 0인 사람은 디터니나 머틀랩 촉수 진액을 먹어 체력을 채운 뒤에 전투를 시작할 수 있습니다.');
     tx.update(gameRef, {
       status: 'battling', round: 1, hp: { [g.userA]: hpA, [g.userB]: hpB }, actions: {},
       buffs: { [g.userA]: {}, [g.userB]: {} }, result: null, lastActionAt: serverTimestamp(),
@@ -1825,6 +1830,7 @@ function actionNote(act, skill, roll) {
   if (act.action === 'defend') return roll.defOk ? `방어(성공/${roll.def})` : '방어(실패)';
   if (act.action === 'heal') return roll.healOk ? `회복(성공/${roll.heal})` : '회복(실패)';
   if (skill === DITTANY_NAME) return `${DITTANY_NAME}(회복${roll.heal})`;
+  if (skill === MYRTLAP_NAME) return `${MYRTLAP_NAME}(회복${roll.heal})`;
   const S = SKILL_NAMES;
   switch (skill) {
     case S.NULLIFY: case S.NULLIFY_THEN_GUARANTEE: return `${skill}(상쇄)`;
@@ -1894,6 +1900,7 @@ function resolveYachaRound({ userA, userB, actions, hp, buffsIn, settings }) {
 
     if (skill === S.COIN) { if (Math.random() < 0.5) { r.healOk = true; r.heal = rollDie(20); } else { r.selfDmg += rollDie(20); } }
     if (skill === DITTANY_NAME) { r.healOk = true; r.heal = rollDie(dittanyDie); }
+    if (skill === MYRTLAP_NAME) { r.healOk = true; r.heal = rollDie(5); }
     const dotActive = buff.healDotRounds > 0 || skill === S.DOT_HEAL;
     if (dotActive) { r.healOk = true; r.heal += rollDie(6); }
     return r;
@@ -2070,15 +2077,15 @@ export async function chooseYachaAction(gameId, action, itemId, subAction) {
     if (r.deadA || r.deadB) {
       const aRef = doc(db, 'users', g.userA); const bRef = doc(db, 'users', g.userB);
       if (r.deadA && r.deadB) {
-        tx.update(aRef, { battleHp: YACHA_BASE_HP, battleActiveGameId: null });
-        tx.update(bRef, { battleHp: YACHA_BASE_HP, battleActiveGameId: null });
+        tx.update(aRef, { battleHp: 0, battleActiveGameId: null });
+        tx.update(bRef, { battleHp: 0, battleActiveGameId: null });
         ended = { type: 'draw' };
       } else if (r.deadA) {
-        tx.update(aRef, { battleHp: YACHA_BASE_HP, battlePoints: increment(-1), battleActiveGameId: null });
+        tx.update(aRef, { battleHp: 0, battlePoints: increment(-1), battleActiveGameId: null });
         tx.update(bRef, { battleHp: r.hpB, battlePoints: increment(1), battleActiveGameId: null });
         ended = { type: 'death', loser: g.userA, winner: g.userB };
       } else {
-        tx.update(bRef, { battleHp: YACHA_BASE_HP, battlePoints: increment(-1), battleActiveGameId: null });
+        tx.update(bRef, { battleHp: 0, battlePoints: increment(-1), battleActiveGameId: null });
         tx.update(aRef, { battleHp: r.hpA, battlePoints: increment(1), battleActiveGameId: null });
         ended = { type: 'death', loser: g.userB, winner: g.userA };
       }
@@ -2103,8 +2110,8 @@ export async function chooseYachaAction(gameId, action, itemId, subAction) {
     await postYachaChatMessage(roomId, null, text);
   }
 }
-// 전투 중이 아닐 때도 디터니를 먹어 체력을 회복할 수 있게 함(전투 탭용). 전투 중엔 사용 불가(해당 라운드 행동으로 써야 함).
-export async function useDittanyStandalone() {
+// 전투 중이 아닐 때도 디터니/머틀랩 촉수 진액을 먹어 체력을 회복할 수 있게 함(전투 탭용). 체력은 자동으로 채워지지 않고, 이 아이템을 먹어야만 회복됩니다.
+export async function useHealingItemStandalone(itemName) {
   const me = uid();
   const userRef = doc(db, 'users', me);
   let healed = 0;
@@ -2114,12 +2121,13 @@ export async function useDittanyStandalone() {
     const u = us.data();
     if (u.battleActiveGameId) throw new Error('전투 중에는 전투 화면에서 사용하십시오.');
     const itemsSnap = await getDocs(collection(db, 'users', me, 'items'));
-    const d = itemsSnap.docs.find((x) => x.data().name === DITTANY_NAME && (x.data().qty || 0) > 0);
-    if (!d) throw new Error('보유한 디터니가 없습니다.');
+    const d = itemsSnap.docs.find((x) => x.data().name === itemName && (x.data().qty || 0) > 0);
+    if (!d) throw new Error(`보유한 ${itemName}이 없습니다.`);
     const hp = Number.isFinite(u.battleHp) ? u.battleHp : YACHA_BASE_HP;
     if (hp >= YACHA_BASE_HP) throw new Error('이미 체력이 가득 찼습니다.');
-    const settings = await fetchYachaBattleSettings();
-    healed = rollDie(settings.dittanyDie);
+    let dieSize = 5;
+    if (itemName === DITTANY_NAME) { const settings = await fetchYachaBattleSettings(); dieSize = settings.dittanyDie; }
+    healed = rollDie(dieSize);
     const newHp = Math.min(YACHA_BASE_HP, hp + healed);
     const left = (d.data().qty || 0) - 1;
     if (left <= 0) tx.delete(d.ref); else tx.update(d.ref, { qty: left });

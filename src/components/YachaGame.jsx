@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   acceptYacha, declineYacha, chooseYachaAction, surrenderYacha, checkYachaTimeout, retractYachaAction,
-  fetchItemsOf, DITTANY_NAME, SKILL_NAMES, SKILL_NEEDS_SUBACTION, SKILL_DESCRIPTIONS, YACHA_BASE_HP,
+  fetchItemsOf, DITTANY_NAME, MYRTLAP_NAME, SKILL_NAMES, SKILL_NEEDS_SUBACTION, SKILL_DESCRIPTIONS, YACHA_BASE_HP,
 } from '../lib/api';
 
 const SUB_LABEL = { attack: '공격', defend: '방어', heal: '회복' };
@@ -29,7 +29,7 @@ export default function YachaGame({ profile, room, game, onRefresh }) {
   const me = profile.id;
   const other = room ? (room.user_a === me ? room.user_b : room.user_a) : null;
 
-  const USABLE_NAMES = [DITTANY_NAME, ...Object.values(SKILL_NAMES)];
+  const USABLE_NAMES = [DITTANY_NAME, MYRTLAP_NAME, ...Object.values(SKILL_NAMES)];
   useEffect(() => {
     if (game?.status === 'battling') {
       fetchItemsOf(me).then((list) => setItems(list.filter((it) => USABLE_NAMES.includes(it.name)))).catch(() => setItems([]));
@@ -142,7 +142,7 @@ export default function YachaGame({ profile, room, game, onRefresh }) {
                 {items.filter((it) => it.name !== SKILL_NAMES.RETRY_PICK).length === 0 && <div className="yacha-note">사용할 수 있는 아이템이 없습니다.</div>}
                 {items.filter((it) => it.name !== SKILL_NAMES.RETRY_PICK).map((it) => (
                   <button key={it.id} type="button" className="a-btn yacha-item-btn" disabled={busy} onClick={() => useItem(it)} title={it.description || SKILL_DESCRIPTIONS[it.name] || ''}>
-                    <div>{it.name === DITTANY_NAME ? `${DITTANY_NAME} 섭취` : it.name} (보유 {it.qty})</div>
+                    <div>{(it.name === DITTANY_NAME || it.name === MYRTLAP_NAME) ? `${it.name} 섭취` : it.name} (보유 {it.qty})</div>
                     <div className="yacha-item-desc">{it.description || SKILL_DESCRIPTIONS[it.name] || ''}</div>
                   </button>
                 ))}
