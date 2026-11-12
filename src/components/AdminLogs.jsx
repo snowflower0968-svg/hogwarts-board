@@ -19,7 +19,7 @@ export function LogList({ items, renderRow, onDelete, emptyText, header }) {
   }
   async function del(ids) {
     if (!ids.length) return;
-    if (!window.confirm(`기록 ${ids.length}개를 삭제할까요?\n(되돌릴 수 없습니다)`)) return;
+    if (!window.confirm(`기록 ${ids.length}개를 삭제하시겠습니까?\n(되돌릴 수 없습니다)`)) return;
     setBusy(true);
     try { await onDelete(ids); setSelected(new Set()); setSelectMode(false); }
     catch (e) { window.alert(e.message || '삭제 중 오류가 발생했습니다.'); }
@@ -113,7 +113,7 @@ function ChatDetail({ room, onBack, onDeleted }) {
   const nameB = room.b?.character_name || '(탈퇴)';
 
   async function remove() {
-    if (!window.confirm('이 채팅방의 모든 기록을 삭제할까요?\n(되돌릴 수 없습니다)')) return;
+    if (!window.confirm('이 채팅방의 모든 기록을 삭제하시겠습니까?\n(되돌릴 수 없습니다)')) return;
     await deleteChatRooms([room.id]);
     onDeleted(room.id);
   }

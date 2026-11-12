@@ -21,8 +21,8 @@ function SelectiveResetCard() {
   async function doReset() {
     if (!any) return;
     const labels = FIELDS.filter(([k]) => opt[k]).map(([, l]) => l).join(', ');
-    if (!window.confirm(`선택한 항목(${labels})을 모든 회원 대상으로 초기화합니다.\n정말 초기화할까요?`)) return;
-    const typed = window.prompt('되돌릴 수 없어요. 계속하려면 "초기화"를 입력하세요.');
+    if (!window.confirm(`선택한 항목(${labels})을 모든 회원 대상으로 초기화합니다.\n정말 초기화하시겠습니까?`)) return;
+    const typed = window.prompt('되돌릴 수 없습니다. 계속하려면 "초기화"를 입력하십시오.');
     if (typed !== '초기화') return;
     setBusy(true); setMsg('');
     try {
@@ -32,7 +32,7 @@ function SelectiveResetCard() {
     finally { setBusy(false); }
   }
   return (
-    <AdminCard title="선택 항목 전체 초기화" hint="체크한 항목만 모든 회원을 대상으로 초기화해요. 개인 기재·갈레온·조사권·야차권·전투 체력·점수도 포함할 수 있어요. 되돌릴 수 없어요.">
+    <AdminCard title="선택 항목 전체 초기화">
       <div className="a-form-row" style={{ flexWrap: 'wrap', gap: '10px 16px' }}>
         {FIELDS.map(([k, label]) => (
           <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
@@ -49,7 +49,7 @@ function SelectiveResetCard() {
 function BattleFactionScoresCard({ allUsers }) {
   const rows = aggregateBattlePointsByFaction(allUsers || []);
   return (
-    <AdminCard title="기숙사별 야차 전투 점수 합계" hint="같은 기숙사 그룹(회귀 전/후 합산)에 속한 회원들의 전투 점수를 모두 더한 값이에요.">
+    <AdminCard title="기숙사별 야차 전투 점수 합계">
       <table className="a-table">
         <thead><tr><th>기숙사</th><th>점수 합계</th></tr></thead>
         <tbody>
@@ -64,8 +64,8 @@ function DangerZoneCard() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   async function doReset() {
-    if (!window.confirm('모든 회원의 포인트를 0으로, 보유 소지품을 전부 비웁니다.\n개인 기재와 갈레온은 그대로 남아요.\n정말 초기화할까요?')) return;
-    const typed = window.prompt('되돌릴 수 없어요. 계속하려면 "초기화"를 입력하세요.');
+    if (!window.confirm('모든 회원의 포인트를 0으로, 보유 소지품을 전부 비웁니다.\n개인 기재와 갈레온은 그대로 남습니다.\n정말 초기화하시겠습니까?')) return;
+    const typed = window.prompt('되돌릴 수 없습니다. 계속하려면 "초기화"를 입력하십시오.');
     if (typed !== '초기화') return;
     setBusy(true); setMsg('');
     try {
@@ -75,7 +75,7 @@ function DangerZoneCard() {
     finally { setBusy(false); }
   }
   return (
-    <AdminCard title="전체 포인트 · 소지품 초기화" hint="모든 회원의 포인트를 0으로, 보유 소지품을 전부 비워요. 개인 기재와 갈레온은 초기화되지 않아요. 되돌릴 수 없어요.">
+    <AdminCard title="전체 포인트 · 소지품 초기화">
       <button className="a-btn danger big" disabled={busy} onClick={doReset}>{busy ? '처리 중' : '전체 초기화'}</button>
       {msg && <div className="a-hint" style={{ marginTop: 8 }}>{msg}</div>}
     </AdminCard>

@@ -85,7 +85,7 @@ function GalleonCard({ profile, onRefresh }) {
 
   return (
     <div className="galleon-card">
-      <div className="galleon-head"><b>내 갈레온</b><span>직접 적는 칸이에요. 관리자가 확인할 수 있어요.</span></div>
+      <div className="galleon-head"><b>내 갈레온</b><span>직접 적는 칸입니다. 관리자가 확인할 수 있습니다.</span></div>
       <div className="galleon-row">
         <input className="txt-input galleon-input" type="number" min="0" inputMode="numeric" value={val} onChange={(e) => setVal(e.target.value)} aria-label="내 갈레온" />
         <span className="galleon-unit">갈레온</span>
@@ -101,7 +101,7 @@ function GalleonCard({ profile, onRefresh }) {
       {ok && <div className="auth-success" style={{ margin: '10px 0 0' }}>{ok}</div>}
       {err && <div className="auth-error" style={{ margin: '10px 0 0' }}>{err}</div>}
       {ask && (
-        <ConfirmModal message={`포인트 ${cost}P를 갈레온 ${n}개로 환전할까요?`} danger={false} confirmLabel="환전"
+        <ConfirmModal message={`포인트 ${cost}P를 갈레온 ${n}개로 환전하시겠습니까?`} danger={false} confirmLabel="환전"
           onCancel={() => setAsk(false)} onConfirm={exchange} />
       )}
     </div>
@@ -142,7 +142,7 @@ export default function Personal({ profile, onRefresh }) {
     <>
       <div className="board-title-bar"><h2>소지품</h2><span className="count">{profile.character_name}</span></div>
       <div className="board-note" style={{ padding: '10px 4px' }}>
-        개인 기재에 직접 적은 항목은 채팅으로 양도할 수 없고, 관리자가 볼 수 있어요.
+        개인 기재에 직접 적은 항목은 채팅으로 양도할 수 없고, 관리자가 볼 수 있습니다.
       </div>
 
       <GalleonCard profile={profile} onRefresh={onRefresh} />

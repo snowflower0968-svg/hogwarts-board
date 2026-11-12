@@ -10,12 +10,12 @@ function ThumbBackfill() {
     setBusy(true); setMsg('사진 글을 찾는 중...');
     try {
       const r = await backfillPostThumbs(makeThumb, (done, total) => setMsg(`대표 사진 만드는 중... ${done}/${total}`));
-      setMsg(r.total === 0 ? '대표 사진이 필요한 글이 없어요.' : `완료! ${r.total - r.failed}개 만들었어요.${r.failed ? ` (${r.failed}개는 실패)` : ''}`);
+      setMsg(r.total === 0 ? '대표 사진이 필요한 글이 없습니다.' : `완료! ${r.total - r.failed}개 만들었습니다.${r.failed ? ` (${r.failed}개는 실패)` : ''}`);
     } catch (e) { setMsg(e.message || '오류가 발생했습니다.'); }
     finally { setBusy(false); }
   }
   return (
-    <AdminCard title="대표 사진 일괄 생성" hint="예전에 사진을 올린 글은 목록에 대표 사진이 없어요. 한 번에 만들어줍니다.">
+    <AdminCard title="대표 사진 일괄 생성">
       <div className="a-form-row" style={{ marginBottom: 0 }}>
         <button className="a-btn accent big" disabled={busy} onClick={run}>{busy ? '진행 중...' : '대표 사진 만들기'}</button>
         {msg && <span className="a-inline-note">{msg}</span>}

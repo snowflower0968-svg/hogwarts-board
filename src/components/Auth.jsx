@@ -9,7 +9,7 @@ export function LoginScreen({ onLoggedIn, goSignup }) {
 
   async function submit(e) {
     e.preventDefault();
-    if (!id || !pw) { setError('아이디와 비밀번호를 입력하세요.'); return; }
+    if (!id || !pw) { setError('아이디와 비밀번호를 입력하십시오.'); return; }
     setBusy(true); setError('');
     try {
       const profile = await signIn(id, pw);
@@ -46,9 +46,9 @@ export function SignupScreen({ goLogin, onDone }) {
 
   async function submit(e) {
     e.preventDefault();
-    if (!id || !pw || !pw2 || !name) { setError('모든 항목을 입력하세요.'); return; }
-    if (id.length < 3) { setError('아이디는 3자 이상 입력하세요.'); return; }
-    if (pw.length < 6) { setError('비밀번호는 6자 이상 입력하세요.'); return; }
+    if (!id || !pw || !pw2 || !name) { setError('모든 항목을 입력하십시오.'); return; }
+    if (id.length < 3) { setError('아이디는 3자 이상 입력하십시오.'); return; }
+    if (pw.length < 6) { setError('비밀번호는 6자 이상 입력하십시오.'); return; }
     if (pw !== pw2) { setError('비밀번호가 일치하지 않습니다.'); return; }
     setBusy(true); setError('');
     try {

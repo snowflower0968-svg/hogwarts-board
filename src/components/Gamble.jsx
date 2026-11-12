@@ -12,7 +12,7 @@ export default function Gamble({ profile, onSpin, onRefresh }) {
   async function submit(e) {
     e.preventDefault();
     const amt = parseInt(bet, 10);
-    if (!amt || amt <= 0) { setError('베팅할 포인트를 입력하세요.'); return; }
+    if (!amt || amt <= 0) { setError('베팅할 포인트를 입력하십시오.'); return; }
     if (amt > profile.points) { setError('보유 포인트보다 많이 베팅할 수 없습니다.'); return; }
     setBusy(true); setError('');
     try {

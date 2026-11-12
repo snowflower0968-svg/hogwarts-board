@@ -15,6 +15,7 @@ import Toasts from './components/Toasts';
 import { ComposeModal, ConfirmModal, GiftModal, IdentityModal } from './components/Modals';
 import Dig from './components/Dig';
 import Shop from './components/Shop';
+import Battle from './components/Battle';
 import Personal from './components/Personal';
 
 export default function App() {
@@ -381,6 +382,7 @@ export default function App() {
         <Sidebar profile={profile} view={view} currentBoard={currentBoard}
           selectBoard={(id) => { scrollMemo.current.delete(`board:${id}`); setCurrentBoard(id); setView('board'); }}
           openMyPage={() => setView('mypage')} openPersonal={() => setView('personal')} openGamble={() => setView('gamble')} openDig={() => setView('dig')} openShop={() => setView('shop')}
+          openBattle={() => setView('battle')}
           openSettings={() => setView('settings')} openAdmin={() => setView('admin')}
           hasChatUnread={hasChatUnread} boardDots={boardDots} mobileOpen={mobileNavOpen} closeMobile={() => setMobileNavOpen(false)} />
         <div className={`sidebar-backdrop ${mobileNavOpen ? 'show' : ''}`} onClick={() => setMobileNavOpen(false)} />
@@ -393,6 +395,10 @@ export default function App() {
 
           {view === 'shop' && (
             <Shop profile={profile} onBought={async () => { const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh); }} />
+          )}
+
+          {view === 'battle' && (
+            <Battle profile={profile} onBought={async () => { const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh); }} />
           )}
 
           {view === 'personal' && <Personal profile={profile} onRefresh={async () => { const fresh = await api.fetchOwnProfile(profile.id); setProfile(fresh); }} />}

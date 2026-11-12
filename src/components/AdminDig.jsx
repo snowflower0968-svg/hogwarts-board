@@ -20,7 +20,7 @@ function RewardRow({ r, sharePct, onChanged }) {
   const set = (k) => (v) => setF((prev) => ({ ...prev, [k]: v }));
 
   async function del() {
-    if (!window.confirm(`"${r.name}" 보상을 목록에서 삭제할까요?\n(이미 칸에 배치된 보상은 그대로 남습니다)`)) return;
+    if (!window.confirm(`"${r.name}" 보상을 목록에서 삭제하시겠습니까?\n(이미 칸에 배치된 보상은 그대로 남습니다)`)) return;
     await deleteDigReward(r.id); await onChanged();
   }
   async function save() {
@@ -34,7 +34,7 @@ function RewardRow({ r, sharePct, onChanged }) {
       <div className="a-item">
         <div className="a-item-main">
           <div className="a-item-title">{r.name}</div>
-          <div className="a-item-sub" style={{ color: 'var(--danger)' }}>예전 방식의 꽝 항목이에요. 지금은 위의 "꽝 비율"로 정하니 삭제해 주세요.</div>
+          <div className="a-item-sub" style={{ color: 'var(--danger)' }}>예전 방식의 꽝 항목입니다. 지금은 위의 "꽝 비율"로 정하니 삭제해 주십시오.</div>
         </div>
         <button className="a-btn danger" onClick={del}>삭제</button>
       </div>
@@ -108,7 +108,7 @@ export function DigAdmin() {
     await run(async () => {
       const n = await adminSeedYachaSkills();
       await loadRewards();
-      setOk(n > 0 ? `${n}개를 새로 등록했습니다. (확률 10%로 추가되니 필요하면 조정하세요)` : '이미 모두 등록되어 있습니다.');
+      setOk(n > 0 ? `${n}개를 새로 등록했습니다. (확률 10%로 추가되니 필요하면 조정하십시오)` : '이미 모두 등록되어 있습니다.');
     });
   }
   async function addReward(e) {
@@ -134,7 +134,7 @@ export function DigAdmin() {
       {err && <div className="auth-error" style={{ margin: '0 4px 10px' }}>{err}</div>}
       {ok && <div className="auth-success" style={{ margin: '0 4px 10px' }}>{ok}</div>}
 
-      <AdminCard title="꽝 비율" hint="판의 몇 %를 꽝으로 할지 정해요. 새 판을 시작하거나 랜덤 배치할 때 적용돼요.">
+      <AdminCard title="꽝 비율">
         <div className="a-form-row">
           <div className="price-input"><input className="txt-input" type="number" min="0" max="100" step="any" value={blank} onChange={(e) => setBlank(e.target.value)} style={{ width: 84 }} /><span>%</span></div>
           <div className="a-inline-note">{DIG_SIZE}칸 중 <b>{missCells}칸</b>이 꽝 <span>(소수점은 버림)</span></div>
@@ -142,7 +142,7 @@ export function DigAdmin() {
         </div>
       </AdminCard>
 
-      <AdminCard title={`보상 목록 (${usable.length})`} hint="꽝을 뺀 나머지 칸에 아래 확률대로 배치돼요. 확률은 서로의 비율이라 합이 100이 아니어도 괜찮아요.">
+      <AdminCard title={`보상 목록 (${usable.length})`}>
         <div className="a-form-row">
           <button className="a-btn" onClick={seedSkills}>디터니·스킬 1~19 일괄 등록</button>
         </div>
@@ -170,7 +170,7 @@ export function DigAdmin() {
           <>
             <div className="a-actions" style={{ marginTop: 0, marginBottom: 12 }}>
               <button className="a-btn accent big" onClick={() => run(adminRandomizeUndug, '안 깐 칸을 랜덤으로 다시 배치했습니다.')}>랜덤 배치 (안 깐 칸)</button>
-              <button className="a-btn danger big" onClick={() => { if (window.confirm('모든 칸을 새로 랜덤 배치하고 조사 기록을 초기화할까요?')) run(adminNewRound, '새 판을 시작했습니다.'); }}>새 판 시작</button>
+              <button className="a-btn danger big" onClick={() => { if (window.confirm('모든 칸을 새로 랜덤 배치하고 조사 기록을 초기화하시겠습니까?')) run(adminNewRound, '새 판을 시작했습니다.'); }}>새 판 시작</button>
             </div>
             <div className="dig-grid admin" style={{ padding: 0 }}>
               {sec.cells.map((c, i) => {
@@ -194,7 +194,7 @@ export function DigAdmin() {
               <span><i className="lg none" />미지정</span>
               <span><i className="lg dug" />조사됨</span>
             </div>
-            <div className="a-hint" style={{ marginTop: 6, marginBottom: 0 }}>칸을 누르면 그 칸의 보상을 바꾸거나, 조사된 칸은 누가 깠는지 볼 수 있어요.</div>
+            <div className="a-hint" style={{ marginTop: 6, marginBottom: 0 }}>칸을 누르면 그 칸의 보상을 바꾸거나, 조사된 칸은 누가 깠는지 볼 수 있습니다.</div>
           </>
         )}
       </AdminCard>

@@ -79,7 +79,7 @@ export function compressImage(file, maxDim = 1000, startQuality = 0.72, maxChars
     reader.onerror = () => reject(new Error('파일을 읽을 수 없습니다.'));
     reader.onload = () => {
       const img = new Image();
-      img.onerror = () => reject(new Error('이미지를 불러올 수 없습니다. (다른 형식으로 시도해 주세요)'));
+      img.onerror = () => reject(new Error('이미지를 불러올 수 없습니다. (다른 형식으로 시도해 주십시오)'));
       img.onload = () => {
         let dim = maxDim;
         let q = startQuality;

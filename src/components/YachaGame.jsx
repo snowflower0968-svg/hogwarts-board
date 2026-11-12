@@ -113,7 +113,7 @@ export default function YachaGame({ profile, room, game, onRefresh }) {
         <HpBar label="상대" hp={oppHp} />
         {subPick ? (
           <div className="yacha-item-row">
-            <div className="yacha-note">{subPick.item.name}과 함께 할 행동을 고르세요.</div>
+            <div className="yacha-note">{subPick.item.name}과 함께 할 행동을 고르십시오.</div>
             {subPick.options.map((o) => (
               <button key={o} type="button" className="a-btn" disabled={busy} onClick={() => run(() => chooseYachaAction(game.id, 'item', subPick.item.id, o))}>{SUB_LABEL[o]}</button>
             ))}
@@ -121,7 +121,7 @@ export default function YachaGame({ profile, room, game, onRefresh }) {
           </div>
         ) : picked ? (
           <div className="yacha-note">
-            행동을 선택했습니다. {oppPicked ? '곧 결과가 나와요.' : '상대의 선택을 기다리는 중'}
+            행동을 선택했습니다. {oppPicked ? '곧 결과가 나옵니다.' : '상대의 선택을 기다리는 중'}
             {!oppPicked && retryItem && (
               <button type="button" className="text-btn" style={{ marginLeft: 8 }} disabled={busy}
                 onClick={() => run(() => retractYachaAction(game.id, retryItem.id))}>

@@ -154,6 +154,8 @@ function mapUser(id, d) {
     dig_bonus: d.digBonus || 0, gamble_void: d.gambleVoid || 0, galleon: d.galleon || 0, withdrawn: !!d.withdrawn, post_count: d.postCount ?? null,
     yacha_bonus: d.yachaTicket || 0,
     battle_hp: d.battleHp ?? 100, battle_points: d.battlePoints || 0,
+    // 자유게시판에서 회귀 전/후 어느 쪽을 보는지는 기숙사 배정과 별개로 바꿀 수 있음(미배정이어도 먼저 전환 가능)
+    era: d.era === 'post' ? 'post' : (d.house ? houseEra(d.house) : 'pre'),
   };
 }
 export function subscribeOwnStatus(id, cb) {
@@ -262,7 +264,8 @@ export async function createPost(board, title, content, images = [], thumb = nul
   const reqBoard = BOARDS.find((b) => b.id === board);
   if (!u.isAdmin && reqBoard) {
     if (reqHouse && u.house !== reqHouse) throw new Error('해당 소속만 작성 가능합니다.');
-    if (!reqHouse && reqBoard.era && houseEra(u.house) !== reqBoard.era) throw new Error('해당 소속만 작성 가능합니다.');
+    const myEra = u.era === 'post' ? 'post' : (u.house ? houseEra(u.house) : 'pre');
+    if (!reqHouse && reqBoard.era && myEra !== reqBoard.era) throw new Error('해당 소속만 작성 가능합니다.');
   }
   const settings = await fetchPointSettings();
   let prevCount = u.postCount;
@@ -469,7 +472,7 @@ export async function fetchMyComments(id) {
 // 관리자가 직접 삭제할 때만 사용 (만료된 채팅방도 기록은 남겨둠)
 export async function deleteChatRoomFully(roomId) {
   const roomSnap0 = await getDoc(doc(db, 'chatRooms', roomId));
-  if (roomSnap0.exists() && roomSnap0.data().yachaActive) throw new Error('야차 게임이 진행 중인 방은 삭제할 수 없습니다. 게임이 끝난 뒤 삭제하세요.');
+  if (roomSnap0.exists() && roomSnap0.data().yachaActive) throw new Error('야차 게임이 진행 중인 방은 삭제할 수 없습니다. 게임이 끝난 뒤 삭제하십시오.');
   const [msgsSnap, readsSnap] = await Promise.all([
     getDocs(collection(db, 'chatRooms', roomId, 'messages')),
     getDocs(collection(db, 'chatRooms', roomId, 'reads')),
@@ -548,7 +551,7 @@ export async function fetchGambleMaxPoints() {
 }
 export async function saveGambleMaxPoints(raw) {
   const v = raw === '' || raw === null || raw === undefined ? null : Math.floor(Number(raw));
-  if (v !== null && !(v > 0)) throw new Error('0보다 큰 숫자를 입력하거나, 비워서 제한을 해제하세요.');
+  if (v !== null && !(v > 0)) throw new Error('0보다 큰 숫자를 입력하거나, 비워서 제한을 해제하십시오.');
   await setDoc(doc(db, 'settings', 'gamble'), { maxPoints: v }, { merge: true });
   return v;
 }
@@ -557,7 +560,7 @@ export async function spinGamble(bet) {
   const snap = await getDoc(userRef);
   const pts = snap.data().points || 0;
   if (pts < 0) throw new Error('포인트가 부족하여 이용할 수 없습니다.');
-  if (!bet || bet <= 0 || bet > pts) throw new Error('베팅 금액을 확인하세요.');
+  if (!bet || bet <= 0 || bet > pts) throw new Error('베팅 금액을 확인하십시오.');
   const [odds, maxPoints] = await Promise.all([fetchGambleOdds(), fetchGambleMaxPoints()]);
   const total = odds.reduce((t, [, w]) => t + w, 0);
   let r = Math.random() * total;
@@ -709,7 +712,7 @@ export async function sendGift(roomId, amount) {
 }
 export async function sendGiftItem(roomId, itemId, qtyRaw) {
   const qty = parseInt(qtyRaw, 10);
-  if (!qty || qty <= 0) throw new Error('수량을 확인하세요.');
+  if (!qty || qty <= 0) throw new Error('수량을 확인하십시오.');
   const roomSnap = await getDoc(doc(db, 'chatRooms', roomId));
   if (!roomSnap.exists()) throw new Error('채팅방을 찾을 수 없습니다.');
   const r = roomSnap.data();
@@ -726,7 +729,7 @@ const TICKET_FIELD = { yacha: 'yachaTicket', dig: 'digBonus' };
 const TICKET_LABEL = { yacha: '야차권', dig: '간이조사권' };
 export async function sendGiftTicket(roomId, ticketType, qtyRaw) {
   const qty = parseInt(qtyRaw, 10);
-  if (!qty || qty <= 0) throw new Error('수량을 확인하세요.');
+  if (!qty || qty <= 0) throw new Error('수량을 확인하십시오.');
   const field = TICKET_FIELD[ticketType];
   if (!field) throw new Error('알 수 없는 티켓 종류입니다.');
   const roomSnap = await getDoc(doc(db, 'chatRooms', roomId));
@@ -985,6 +988,13 @@ export async function adminBulkSetHouse(userIds, house) {
   await batch.commit();
   return userIds.length;
 }
+// 자유게시판에서 보이는 회귀 전/후를 기숙사 배정과 별개로 바꿉니다. 기숙사가 아직 미지정이어도 먼저 전환할 수 있습니다.
+export async function adminBulkSetEra(userIds, era) {
+  const batch = writeBatch(db);
+  userIds.forEach((id) => { batch.update(doc(db, 'users', id), { era: era === 'post' ? 'post' : 'pre' }); });
+  await batch.commit();
+  return userIds.length;
+}
 export async function toggleAdminRole(id) {
   const ref = doc(db, 'users', id);
   const snap = await getDoc(ref);
@@ -1018,7 +1028,7 @@ export async function adminWithdrawUser(userId, deleteContent) {
   if (userId === uid()) throw new Error('본인은 탈퇴시킬 수 없습니다.');
   const target = await fetchProfileById(userId);
   if (!target) throw new Error('회원 정보를 찾을 수 없습니다.');
-  if (target.is_admin) throw new Error('관리자 계정은 먼저 관리자 권한을 해제해 주세요.');
+  if (target.is_admin) throw new Error('관리자 계정은 먼저 관리자 권한을 해제해 주십시오.');
   await updateDoc(doc(db, 'users', userId), { withdrawn: true, approved: false, rejected: true });
   const removed = { posts: 0, comments: 0 };
   if (deleteContent) {
@@ -1090,15 +1100,15 @@ export async function fetchItemsOf(userId) {
 }
 export async function deleteMyItem(itemId, qtyRaw) {
   const qty = parseInt(qtyRaw, 10);
-  if (!qty || qty <= 0) throw new Error('수량을 확인하세요.');
+  if (!qty || qty <= 0) throw new Error('수량을 확인하십시오.');
   const me = await fetchOwnProfile(uid());
   const item = await removeItemFromUser(uid(), itemId, qty);
   await logItem({ action: 'user_delete', userId: uid(), userName: me?.character_name || '', itemName: item.name, itemDescription: item.description || '', qty });
 }
 export async function adminGrantItem(userId, name, description, qtyRaw, message) {
   const qty = parseInt(qtyRaw, 10);
-  if (!name || !name.trim()) throw new Error('소지품 이름을 입력하세요.');
-  if (!qty || qty <= 0) throw new Error('수량을 확인하세요.');
+  if (!name || !name.trim()) throw new Error('소지품 이름을 입력하십시오.');
+  if (!qty || qty <= 0) throw new Error('수량을 확인하십시오.');
   await addItemToUser(userId, name, description, qty);
   const target = await fetchProfileById(userId);
   await logItem({ action: 'admin_grant', userId, userName: target?.character_name || '', itemName: name.trim(), itemDescription: (description || '').trim(), qty });
@@ -1106,7 +1116,7 @@ export async function adminGrantItem(userId, name, description, qtyRaw, message)
 }
 export async function adminRemoveItem(userId, itemId, qtyRaw, message) {
   const qty = parseInt(qtyRaw, 10);
-  if (!qty || qty <= 0) throw new Error('수량을 확인하세요.');
+  if (!qty || qty <= 0) throw new Error('수량을 확인하십시오.');
   const item = await removeItemFromUser(userId, itemId, qty);
   const target = await fetchProfileById(userId);
   await logItem({ action: 'admin_remove', userId, userName: target?.character_name || '', itemName: item.name, itemDescription: item.description || '', qty });
@@ -1147,7 +1157,7 @@ export async function fetchDigConfig() {
 }
 export async function saveDigConfig({ blankPercent }) {
   const p = Number(blankPercent);
-  if (!(p >= 0 && p <= 100)) throw new Error('꽝 비율은 0~100 사이로 입력하세요.');
+  if (!(p >= 0 && p <= 100)) throw new Error('꽝 비율은 0~100 사이로 입력하십시오.');
   await setDoc(cfgRefOf(), { blankPercent: p });
 }
 
@@ -1158,7 +1168,7 @@ export async function fetchDigRewards() {
     .sort((a, b) => a.createdMs - b.createdMs);
 }
 export async function saveDigReward(id, data) {
-  if (!data.name || !data.name.trim()) throw new Error('보상 이름을 입력하세요.');
+  if (!data.name || !data.name.trim()) throw new Error('보상 이름을 입력하십시오.');
   const payload = { name: data.name.trim(), description: (data.description || '').trim(), weight: Number(data.weight) || 0, empty: !!data.empty };
   if (id) await updateDoc(doc(db, 'digRewards', id), payload);
   else await addDoc(collection(db, 'digRewards'), { ...payload, createdAt: serverTimestamp() });
@@ -1182,7 +1192,7 @@ export async function adminAssignCell(index, reward) {
   await runTransaction(db, async (tx) => {
     const p = await tx.get(pubRefOf());
     const sc = await tx.get(secRefOf());
-    if (!p.exists() || !sc.exists()) throw new Error('먼저 "새 판 시작"을 눌러주세요.');
+    if (!p.exists() || !sc.exists()) throw new Error('먼저 "새 판 시작"을 눌러주십시오.');
     if (p.data().cells[index].dug) throw new Error('이미 조사된 칸은 바꿀 수 없습니다.');
     const cells = sc.data().cells.slice();
     // reward: 보상 객체 / 'miss'(꽝) / null(미지정)
@@ -1192,11 +1202,11 @@ export async function adminAssignCell(index, reward) {
 }
 export async function adminRandomizeUndug() {
   const [catalog, cfg] = await Promise.all([fetchDigRewards(), fetchDigConfig()]);
-  if (!usableRewards(catalog).length && cfg.blankPercent < 100) throw new Error('확률이 0보다 큰 보상을 먼저 등록하세요.');
+  if (!usableRewards(catalog).length && cfg.blankPercent < 100) throw new Error('확률이 0보다 큰 보상을 먼저 등록하십시오.');
   await runTransaction(db, async (tx) => {
     const p = await tx.get(pubRefOf());
     const sc = await tx.get(secRefOf());
-    if (!p.exists() || !sc.exists()) throw new Error('먼저 "새 판 시작"을 눌러주세요.');
+    if (!p.exists() || !sc.exists()) throw new Error('먼저 "새 판 시작"을 눌러주십시오.');
     const cells = sc.data().cells.slice();
     const undug = [];
     p.data().cells.forEach((pc, i) => { if (!pc.dug) undug.push(i); });
@@ -1274,7 +1284,7 @@ export async function fetchDigLogs() {
 // ================= 간이조사권 (구매/선물) =================
 export async function adminGrantDigTickets(userId, deltaRaw, message) {
   const delta = parseInt(deltaRaw, 10);
-  if (!delta) throw new Error('수량을 입력하세요. (회수는 음수)');
+  if (!delta) throw new Error('수량을 입력하십시오. (회수는 음수)');
   const ref = doc(db, 'users', userId);
   await runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
@@ -1304,7 +1314,7 @@ export function subscribeShop(cb) {
   }, () => cb([]));
 }
 export async function saveShopItem(id, data) {
-  if (!data.name || !data.name.trim()) throw new Error('상품 이름을 입력하세요.');
+  if (!data.name || !data.name.trim()) throw new Error('상품 이름을 입력하십시오.');
   const price = Math.floor(Number(data.price));
   if (!(price >= 0)) throw new Error('가격은 0 이상의 숫자여야 합니다.');
   const payload = { name: data.name.trim(), description: (data.description || '').trim(), price, kind: SHOP_KINDS.includes(data.kind) ? data.kind : 'item', enabled: data.enabled !== false };
@@ -1315,8 +1325,8 @@ export async function deleteShopItem(id) { await deleteDoc(doc(db, 'shopItems', 
 // 여러 상품에 한꺼번에 할인 적용. hours 가 비어 있으면 해제할 때까지 계속 할인
 export async function setShopDiscount(ids, percentRaw, hoursRaw) {
   const percent = Number(percentRaw);
-  if (!ids.length) throw new Error('할인할 상품을 선택하세요.');
-  if (!(percent > 0 && percent <= 100)) throw new Error('할인율은 1~100 사이로 입력하세요.');
+  if (!ids.length) throw new Error('할인할 상품을 선택하십시오.');
+  if (!(percent > 0 && percent <= 100)) throw new Error('할인율은 1~100 사이로 입력하십시오.');
   const hours = hoursRaw === '' || hoursRaw === null || hoursRaw === undefined ? null : Number(hoursRaw);
   if (hours !== null && !(hours > 0)) throw new Error('할인 시간은 0보다 커야 합니다. (비우면 해제 전까지 계속)');
   const until = hours === null ? null : Date.now() + Math.round(hours * 3600 * 1000);
@@ -1325,7 +1335,7 @@ export async function setShopDiscount(ids, percentRaw, hoursRaw) {
   await batch.commit();
 }
 export async function clearShopDiscount(ids) {
-  if (!ids.length) throw new Error('상품을 선택하세요.');
+  if (!ids.length) throw new Error('상품을 선택하십시오.');
   const batch = writeBatch(db);
   ids.forEach((id) => batch.update(doc(db, 'shopItems', id), { discountPercent: 0, discountUntil: null }));
   await batch.commit();
@@ -1347,7 +1357,7 @@ export async function fetchVoidTiers() {
 export async function saveVoidTiers(list) {
   const tiers = cleanTiers(list).map((t) => ({ minGalleon: Math.floor(t.minGalleon), price: Math.floor(t.price) }));
   const seen = new Set();
-  tiers.forEach((t) => { if (seen.has(t.minGalleon)) throw new Error('같은 갈레온 기준이 두 번 들어 있어요.'); seen.add(t.minGalleon); });
+  tiers.forEach((t) => { if (seen.has(t.minGalleon)) throw new Error('같은 갈레온 기준이 두 번 들어 있습니다.'); seen.add(t.minGalleon); });
   await setDoc(doc(db, 'settings', 'voidPrice'), { tiers });
   return tiers;
 }
@@ -1359,7 +1369,7 @@ export function voidPriceFor(basePrice, tiers, galleon) {
 }
 export async function buyShopItem(shopId, qtyRaw) {
   const qty = parseInt(qtyRaw, 10);
-  if (!qty || qty <= 0 || qty > 99) throw new Error('수량은 1~99 사이로 입력하세요.');
+  if (!qty || qty <= 0 || qty > 99) throw new Error('수량은 1~99 사이로 입력하십시오.');
   const me = uid();
   const voidTiers = await fetchVoidTiers();
   let info;
@@ -1377,8 +1387,8 @@ export async function buyShopItem(shopId, qtyRaw) {
     const pts = us.data().points || 0;
     if (pts < total) throw new Error('포인트가 부족합니다.');
     if (shop.kind === 'gamble_void') {
-      if (qty !== 1) throw new Error('도박 무효권은 한 번에 1장만 살 수 있어요.');
-      if ((us.data().gambleVoid || 0) >= 1) throw new Error('이미 도박 무효권을 가지고 있어요. 사용한 뒤에 다시 살 수 있어요.');
+      if (qty !== 1) throw new Error('도박 무효권은 한 번에 1장만 살 수 있습니다.');
+      if ((us.data().gambleVoid || 0) >= 1) throw new Error('이미 도박 무효권을 가지고 있습니다. 사용한 뒤에 다시 살 수 있습니다.');
     }
     let itemRef = null; let itemSnap = null;
     if (shop.kind === 'item') {
@@ -1413,11 +1423,11 @@ export async function fetchNotes(userId) {
     .sort((a, b) => a.created_at - b.created_at);
 }
 export async function addNote(name, note, qty) {
-  if (!name || !name.trim()) throw new Error('이름을 입력하세요.');
+  if (!name || !name.trim()) throw new Error('이름을 입력하십시오.');
   await addDoc(collection(db, 'users', uid(), 'notes'), { name: name.trim(), note: (note || '').trim(), qty: cleanQty(qty), createdAt: serverTimestamp() });
 }
 export async function updateNote(id, name, note, qty) {
-  if (!name || !name.trim()) throw new Error('이름을 입력하세요.');
+  if (!name || !name.trim()) throw new Error('이름을 입력하십시오.');
   await updateDoc(doc(db, 'users', uid(), 'notes', id), { name: name.trim(), note: (note || '').trim(), qty: cleanQty(qty) });
 }
 export async function deleteNote(id) { await deleteDoc(doc(db, 'users', uid(), 'notes', id)); }
@@ -1466,7 +1476,7 @@ export async function saveGalleonRate(v) {
 // 포인트 -> 갈레온 환전 (환율: 갈레온 1개 = N포인트, 관리자가 정함)
 export async function exchangeToGalleon(amountRaw) {
   const amount = parseInt(amountRaw, 10);
-  if (!amount || amount <= 0 || amount > 1000000) throw new Error('환전할 갈레온 수를 확인하세요.');
+  if (!amount || amount <= 0 || amount > 1000000) throw new Error('환전할 갈레온 수를 확인하십시오.');
   const me = uid();
   let info;
   await runTransaction(db, async (tx) => {
@@ -1487,7 +1497,7 @@ export async function exchangeToGalleon(amountRaw) {
 // 내 갈레온을 직접 적기 (변경 내역은 관리자 기록에 남음)
 export async function setMyGalleon(raw) {
   const v = Math.floor(Number(raw));
-  if (!(v >= 0) || v > 999999999) throw new Error('0 이상의 숫자를 입력하세요.');
+  if (!(v >= 0) || v > 999999999) throw new Error('0 이상의 숫자를 입력하십시오.');
   const me = uid();
   let before = 0; let name = '';
   await runTransaction(db, async (tx) => {
@@ -1502,7 +1512,7 @@ export async function setMyGalleon(raw) {
 }
 export async function adminAdjustGalleon(userId, deltaRaw, message) {
   const delta = parseInt(deltaRaw, 10);
-  if (!delta) throw new Error('수량을 입력하세요.');
+  if (!delta) throw new Error('수량을 입력하십시오.');
   let before = 0; let after = 0; let name = '';
   await runTransaction(db, async (tx) => {
     const ref = doc(db, 'users', userId);
@@ -1539,14 +1549,14 @@ export async function adminGrantGambleVoid(userId, delta, message) {
 // ================= 관리자: 기숙사 일괄 지급 / 빚 무효화 =================
 // houses: 기숙사 id 배열. kind: points | galleon | ticket | void | item. 결과: 성공/건너뜀/실패 명단
 export async function adminBulkGrant(houses, kind, opts) {
-  if (!houses.length) throw new Error('기숙사를 선택하세요.');
+  if (!houses.length) throw new Error('기숙사를 선택하십시오.');
   const all = await fetchAllUsers();
   const targets = all.filter((u) => u.approved && !u.withdrawn && houses.includes(u.house));
   if (!targets.length) throw new Error('선택한 기숙사에 지급할 회원이 없습니다.');
   const n = parseInt(opts.amount, 10);
   const msg = (opts.message || '').trim();
-  if ((kind === 'points' || kind === 'galleon' || kind === 'ticket') && !(n > 0)) throw new Error('수량을 입력하세요.');
-  if (kind === 'item' && !(opts.name || '').trim()) throw new Error('소지품 이름을 입력하세요.');
+  if ((kind === 'points' || kind === 'galleon' || kind === 'ticket') && !(n > 0)) throw new Error('수량을 입력하십시오.');
+  if (kind === 'item' && !(opts.name || '').trim()) throw new Error('소지품 이름을 입력하십시오.');
   const result = { ok: 0, skipped: [], failed: [] };
   for (const u of targets) {
     try {
@@ -1650,7 +1660,7 @@ export const NULLIFY_SKILL_NAME = SKILL_NAMES.NULLIFY; // 하위 호환용 별�
 export async function adminSeedYachaSkills() {
   const existing = await fetchDigRewards();
   const existingNames = new Set(existing.map((r) => r.name));
-  const toAdd = [{ name: DITTANY_NAME, description: '먹으면 체력이 주사위만큼 회복됩니다(최대 100, 주사위 크기는 관리자가 설정). 전투 탭에서도 사용할 수 있어요.' }];
+  const toAdd = [{ name: DITTANY_NAME, description: '먹으면 체력이 주사위만큼 회복됩니다(최대 100, 주사위 크기는 관리자가 설정). 전투 탭에서도 사용할 수 있습니다.' }];
   Object.values(SKILL_NAMES).forEach((name) => { toAdd.push({ name, description: SKILL_DESCRIPTIONS[name] || '' }); });
   let count = 0;
   for (const item of toAdd) {
@@ -1668,7 +1678,7 @@ export async function fetchYachaTimeoutMs() {
 }
 export async function saveYachaTimeoutMs(minutesRaw) {
   const min = Number(minutesRaw);
-  if (!(min > 0)) throw new Error('0보다 큰 숫자(분)를 입력하세요.');
+  if (!(min > 0)) throw new Error('0보다 큰 숫자(분)를 입력하십시오.');
   await setDoc(doc(db, 'settings', 'yacha'), { timeoutMs: Math.round(min * 60 * 1000) }, { merge: true });
   return min;
 }
@@ -1689,7 +1699,7 @@ export async function fetchYachaBattleSettings() {
 }
 export async function saveYachaBattleSettings({ atkChance, defChance, healChance, dieMax, dittanyDie }) {
   const a = Number(atkChance); const d = Number(defChance); const h = Number(healChance); const die = Number(dieMax); const dd = Number(dittanyDie);
-  if (![a, d, h].every((v) => v >= 0 && v <= 100)) throw new Error('확률은 0~100 사이로 입력하세요.');
+  if (![a, d, h].every((v) => v >= 0 && v <= 100)) throw new Error('확률은 0~100 사이로 입력하십시오.');
   if (!(die >= 1)) throw new Error('주사위 최대값은 1 이상이어야 합니다.');
   if (!(dd >= 1)) throw new Error('디터니 회복 주사위는 1 이상이어야 합니다.');
   await setDoc(doc(db, 'settings', 'yacha'), { atkChance: a, defChance: d, healChance: h, dieMax: Math.round(die), dittanyDie: Math.round(dd) }, { merge: true });
@@ -1967,7 +1977,7 @@ function resolveYachaRound({ userA, userB, actions, hp, buffsIn, settings }) {
 // 둘 다 고르면 그제서야 한 라운드가 한꺼번에 풀려서 결과가 공개됨
 export async function chooseYachaAction(gameId, action, itemId, subAction) {
   if (!YACHA_ACTIONS.includes(action)) throw new Error('잘못된 행동입니다.');
-  if (action === 'item' && !itemId) throw new Error('사용할 아이템을 선택하세요.');
+  if (action === 'item' && !itemId) throw new Error('사용할 아이템을 선택하십시오.');
   const me = uid();
   const gameRef = doc(db, 'yachaGames', gameId);
   const settings = await fetchYachaBattleSettings();
@@ -1985,7 +1995,7 @@ export async function chooseYachaAction(gameId, action, itemId, subAction) {
       if (!myItemSnap.exists() || (myItemSnap.data().qty || 0) < 1) throw new Error('보유하지 않은 아이템입니다.');
     }
     const itemName = myItemSnap ? myItemSnap.data().name : null;
-    if (SKILL_NEEDS_SUBACTION.includes(itemName) && !subAction) throw new Error('함께 선택할 행동을 골라주세요.');
+    if (SKILL_NEEDS_SUBACTION.includes(itemName) && !subAction) throw new Error('함께 선택할 행동을 골라주십시오.');
     const hpNow = g.hp || {};
     const cond = SKILL_HP_CONDITIONS.find(([n]) => n === itemName);
     if (cond) {
@@ -2102,7 +2112,7 @@ export async function useDittanyStandalone() {
     const us = await tx.get(userRef);
     if (!us.exists()) throw new Error('유저 정보를 찾을 수 없습니다.');
     const u = us.data();
-    if (u.battleActiveGameId) throw new Error('전투 중에는 전투 화면에서 사용하세요.');
+    if (u.battleActiveGameId) throw new Error('전투 중에는 전투 화면에서 사용하십시오.');
     const itemsSnap = await getDocs(collection(db, 'users', me, 'items'));
     const d = itemsSnap.docs.find((x) => x.data().name === DITTANY_NAME && (x.data().qty || 0) > 0);
     if (!d) throw new Error('보유한 디터니가 없습니다.');

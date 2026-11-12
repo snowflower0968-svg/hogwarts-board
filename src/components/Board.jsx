@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { BOARDS, houseEra } from '../lib/api';
+import { BOARDS } from '../lib/api';
 import { boardName, fmtTime, clip } from '../lib/helpers';
 
 function canPostToBoard(profile, boardId) {
@@ -7,7 +7,7 @@ function canPostToBoard(profile, boardId) {
   const b = BOARDS.find((x) => x.id === boardId);
   if (!b) return true;
   if (b.house) return profile.house === b.house;
-  if (b.era) return houseEra(profile.house) === b.era; // 자유게시판: 내 회귀 전/후 소속과 같은 쪽만
+  if (b.era) return (profile.era || 'pre') === b.era; // 자유게시판: 내가 전환해둔 회귀 전/후 쪽만(기숙사 배정과 별개)
   return true; // 익명방 등 소속 구분이 없는 게시판
 }
 

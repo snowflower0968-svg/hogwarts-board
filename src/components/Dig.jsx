@@ -39,7 +39,7 @@ export default function Dig({ profile, onDug }) {
       setInfo({ title: c.empty ? `${c.name} (꽝)` : c.name, description: c.description });
       return;
     }
-    if (available < 1) { setError('조사 가능 횟수가 없습니다. 다음 충전을 기다리거나 상점에서 조사권을 구매하세요.'); return; }
+    if (available < 1) { setError('조사 가능 횟수가 없습니다. 다음 충전을 기다리거나 상점에서 조사권을 구매하십시오.'); return; }
     doDig(i); // 클릭하면 바로 깜 (확인창 없음)
   }
 
@@ -58,7 +58,7 @@ export default function Dig({ profile, onDug }) {
           <div style={{ marginTop: 4 }}>구매·선물 조사권 <b>{bonus}</b>장</div>
         </div>
       </div>
-      <div className="dig-note">2시간마다 1회 충전되고, 최대 3회까지 모입니다. 조사권(상점 구매·선물)은 충전분을 다 쓴 뒤 사용되고 개수 제한이 없어요. 칸은 모든 캐릭터가 함께 쓰는 공용 판입니다.</div>
+      <div className="dig-note">2시간마다 1회 충전되고, 최대 3회까지 모입니다. 조사권(상점 구매·선물)은 충전분을 다 쓴 뒤 사용되고 개수 제한이 없습니다. 칸은 모든 캐릭터가 함께 쓰는 공용 판입니다.</div>
 
       {error && <div className="auth-error" style={{ margin: '0 4px 10px' }}>{error}</div>}
 

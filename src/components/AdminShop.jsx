@@ -24,7 +24,7 @@ export function PointSettingsCard() {
     catch (e) { setErr(e.message); }
   }
   return (
-    <AdminCard title="포인트 자동 지급 기준" hint="각 회원이 지금까지 쓴 글·댓글 개수를 기준으로 계산해요. 예) 글 1개당 5포인트, 댓글 2개당 1포인트">
+    <AdminCard title="포인트 자동 지급 기준">
       <div className="setting-line">
         게시글 <input type="number" min="1" value={v.postEvery} onChange={set('postEvery')} /> 개마다
         <input type="number" min="0" value={v.postAmount} onChange={set('postAmount')} /> 포인트
@@ -54,7 +54,7 @@ export function GalleonRateCard() {
     catch (e) { setErr(e.message); }
   }
   return (
-    <AdminCard title="갈레온 환율" hint="회원이 포인트를 갈레온으로 환전할 때 적용돼요.">
+    <AdminCard title="갈레온 환율">
       <div className="a-form-row">
         <span className="a-inline-note" style={{ flex: 'none', minWidth: 0 }}>갈레온 1개 =</span>
         <div className="price-input"><input className="txt-input" type="number" min="1" value={rate} onChange={(e) => setRate(e.target.value)} style={{ width: 90 }} /><span>포인트</span></div>
@@ -91,7 +91,7 @@ export function GambleOddsCard() {
     } catch (e) { setErr(e.message); }
   }
   return (
-    <AdminCard title="도박 확률" hint="배율과 비중을 정해요. 배율은 0, 0.1, 0.5처럼 소수도 되고 비중(개수)도 0.1, 0.8처럼 소수로 정할 수 있어요. 비중이 클수록 자주 나오고, 확률은 비중의 합으로 자동 계산돼요. 0배는 베팅액을 모두 잃고, 음수면 베팅액보다 더 잃어요.">
+    <AdminCard title="도박 확률">
       {rows.map((r, i) => {
         const pct = total > 0 && valid.includes(r) ? (Number(r.w) / total) * 100 : 0;
         return (
@@ -127,7 +127,7 @@ export function GambleMaxPointsCard() {
     catch (e) { setErr(e.message); }
   }
   return (
-    <AdminCard title="도박 최대 보유 포인트" hint="도박 결과로 포인트가 이 값을 넘지 않게 해요. 예) 100만으로 정하면 20만에서 10배가 떠도 100만까지만 가져요. 이미 이 값보다 많이 가진 사람에게는 영향 없어요. 비우면 제한 없음.">
+    <AdminCard title="도박 최대 보유 포인트">
       <div className="a-form-row">
         <input className="txt-input" type="number" min="1" value={v} onChange={(e) => setV(e.target.value)} placeholder="제한 없음" style={{ width: 160 }} />
         <button className="a-btn accent big" disabled={v === saved} onClick={save}>저장</button>
@@ -161,7 +161,7 @@ export function VoidPriceCard() {
     } catch (e) { setErr(e.message); }
   }
   return (
-    <AdminCard title="도박 무효권 가격 (갈레온별)" hint="보유 갈레온이 기준 이상이면 그 가격으로 팔아요. 기준에 여러 개 해당하면 가장 높은 기준이 적용되고, 어디에도 해당하지 않으면 상점에 적은 기본 가격이에요. 이 기준은 회원에게 보이지 않고 자기 가격만 보여요. 가격은 포인트(P) 기준이고, 상점 할인은 이 가격에 다시 적용돼요.">
+    <AdminCard title="도박 무효권 가격 (갈레온별)">
       {rows.map((r, i) => (
         <div key={i} className="a-form-row">
           <div className="price-input"><span>갈레온</span><input className="txt-input" type="number" min="0" value={r.g} onChange={change(i, 'g')} style={{ width: 80 }} aria-label="갈레온 기준" /><span>이상</span></div>
@@ -193,7 +193,7 @@ export function YachaTimeoutCard() {
     catch (e) { setErr(e.message); }
   }
   return (
-    <AdminCard title="야차 이탈 제한시간" hint="상대가 이 시간 동안 응답하지 않으면 자동 처리돼요. (신청 대기, 전투 중 행동 선택 모두 동일하게 적용)">
+    <AdminCard title="야차 이탈 제한시간">
       <div className="a-form-row">
         <input className="txt-input" type="number" min="1" value={v} onChange={(e) => setV(e.target.value)} style={{ width: 100 }} /><span className="a-inline-note">분</span>
         <button className="a-btn accent big" disabled={v === saved} onClick={save}>저장</button>
@@ -229,7 +229,7 @@ export function YachaBattleSettingsCard() {
     } catch (e) { setErr(e.message); }
   }
   return (
-    <AdminCard title="야차 전투 확률 · 주사위" hint="공격/방어/회복이 각각 성공할 확률(%)과, 성공 시 수치를 정하는 주사위의 최대값이에요. 기본은 70%, 1d20이며 디터니 회복은 기본 1d10입니다.">
+    <AdminCard title="야차 전투 확률 · 주사위">
       <div className="a-form-row">
         <span className="a-inline-note">공격 성공률</span><input className="txt-input" type="number" min="0" max="100" value={v.atk} onChange={change('atk')} style={{ width: 70 }} /><span className="a-inline-note">%</span>
       </div>
@@ -254,10 +254,10 @@ export function YachaBattleSettingsCard() {
 
 // ---------------- 상점 상품 관리 ----------------
 const KIND_HINT = {
-  item: '구매하면 소지품으로 들어가요.',
-  dig_ticket: '구매하면 조사 횟수가 늘어나요. (최대 3회 충전과 별개, 구매 제한 없음)',
+  item: '구매하면 소지품으로 들어갑니다.',
+  dig_ticket: '구매하면 조사 횟수가 늘어납니다. (최대 3회 충전과 별개, 구매 제한 없음)',
   gamble_void: '도박 직후에 1회 결과를 없던 일로 되돌립니다. 1회 1장만 보유 가능하며 사용 후 재구매가 가능합니다.',
-  yacha_ticket: '채팅에서 야차를 신청·수락할 때 1장씩 소모돼요. 둘 중 한쪽만 보유해도 진행 가능. 구매 제한 없음.',
+  yacha_ticket: '채팅에서 야차를 신청·수락할 때 1장씩 소모됩니다. 둘 중 한쪽만 보유해도 진행 가능. 구매 제한 없음.',
 };
 const KIND_LABEL = { item: '일반 상품', dig_ticket: '간이조사권', gamble_void: '도박 무효권', yacha_ticket: '야차권' };
 const KIND_TAG = { dig_ticket: '조사권', gamble_void: '무효권', yacha_ticket: '야차권' };
@@ -333,12 +333,12 @@ function ShopRow({ s, checked, onCheck, now }) {
   async function save() {
     setErr('');
     const textChanged = s.kind === 'item' && (f.name.trim() !== s.name || f.description.trim() !== s.description);
-    if (textChanged && !window.confirm('이름이나 설명을 바꾸면, 이미 구매된 소지품과 별개 항목으로 표시돼요.\n(이미 산 사람의 소지품은 예전 이름 그대로 남아요)\n그래도 저장할까요?')) return;
+    if (textChanged && !window.confirm('이름이나 설명을 바꾸면, 이미 구매된 소지품과 별개 항목으로 표시됩니다.\n(이미 산 사람의 소지품은 예전 이름 그대로 남습니다)\n그래도 저장하시겠습니까?')) return;
     try { await saveShopItem(s.id, f); setEditing(false); }
     catch (e) { setErr(e.message || '오류가 발생했습니다.'); }
   }
   async function del() {
-    if (!window.confirm(`"${s.name}" 상품을 삭제할까요?`)) return;
+    if (!window.confirm(`"${s.name}" 상품을 삭제하시겠습니까?`)) return;
     await deleteShopItem(s.id);
   }
 
@@ -372,8 +372,8 @@ function ShopRow({ s, checked, onCheck, now }) {
           </div>
           <KindToggle value={f.kind} onChange={set('kind')} />
           <input className="txt-input" style={{ width: '100%', margin: '4px 0 6px' }} type="text" value={f.description} onChange={(e) => set('description')(e.target.value)} placeholder="설명 / 효과 (선택)" />
-          {s.kind === 'item' && <div className="a-hint" style={{ marginBottom: 8 }}>이름이나 설명을 바꾸면 이미 산 소지품과는 별개 항목으로 표시돼요.</div>}
-          <label className="check-line" style={{ marginTop: 0 }}><input type="checkbox" checked={f.enabled} onChange={(e) => set('enabled')(e.target.checked)} /> 판매 중 (끄면 상점에서 숨겨져요)</label>
+          {s.kind === 'item' && <div className="a-hint" style={{ marginBottom: 8 }}>이름이나 설명을 바꾸면 이미 산 소지품과는 별개 항목으로 표시됩니다.</div>}
+          <label className="check-line" style={{ marginTop: 0 }}><input type="checkbox" checked={f.enabled} onChange={(e) => set('enabled')(e.target.checked)} /> 판매 중 (끄면 상점에서 숨겨집니다)</label>
           <div className="admin-row-form" style={{ marginTop: 10 }}>
             <button className="accent" onClick={save}>저장</button>
             <button className="danger" onClick={del}>상품 삭제</button>
@@ -413,7 +413,7 @@ export function ShopAdmin() {
       <AdminCard
         title={`상품 목록 (${items.length})`}
         right={items.length > 0 ? <button className="select-toggle" onClick={() => setSel(sel.size === items.length ? new Set() : new Set(items.map((i) => i.id)))}>{sel.size === items.length ? '선택 해제' : '전체 선택'}</button> : null}
-        hint={items.length > 0 && sel.size === 0 ? '상품 앞의 체크박스를 선택하면 할인을 적용할 수 있어요.' : undefined}
+        hint={items.length > 0 && sel.size === 0 ? '상품 앞의 체크박스를 선택하면 할인을 적용할 수 있습니다.' : undefined}
       >
         {err && <div className="auth-error">{err}</div>}
         {ok && <div className="auth-success">{ok}</div>}
@@ -425,7 +425,7 @@ export function ShopAdmin() {
               <input type="number" min="1" max="100" value={pct} onChange={(e) => setPct(e.target.value)} /> % 할인 ·
               <input type="number" min="0" step="any" value={hours} onChange={(e) => setHours(e.target.value)} /> 시간 동안
             </div>
-            <div className="row-sub">시간을 비우면 "할인 해제"를 누르기 전까지 계속 할인돼요. (가격은 반올림)</div>
+            <div className="row-sub">시간을 비우면 "할인 해제"를 누르기 전까지 계속 할인됩니다. (가격은 반올림)</div>
             <div className="a-actions">
               <button className="a-btn accent big" onClick={() => run(() => setShopDiscount([...sel], pct, hours), '할인을 적용했습니다.')}>할인 적용</button>
               <button className="a-btn danger big" onClick={() => run(() => clearShopDiscount([...sel]), '할인을 해제했습니다.')}>할인 해제</button>

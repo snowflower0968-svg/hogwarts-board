@@ -21,7 +21,7 @@ export default function Settings({ profile, onProfileChange }) {
   async function submitId(e) {
     e.preventDefault();
     setIdOk('');
-    if (newId.trim().length < 3) { setIdErr('아이디는 3자 이상 입력하세요.'); return; }
+    if (newId.trim().length < 3) { setIdErr('아이디는 3자 이상 입력하십시오.'); return; }
     try {
       await changeLoginId(newId.trim());
       onProfileChange({ ...profile, login_id: newId.trim() });
@@ -31,7 +31,7 @@ export default function Settings({ profile, onProfileChange }) {
   async function submitPw(e) {
     e.preventDefault();
     setPwOk('');
-    if (newPw.length < 6) { setPwErr('새 비밀번호는 6자 이상 입력하세요.'); return; }
+    if (newPw.length < 6) { setPwErr('새 비밀번호는 6자 이상 입력하십시오.'); return; }
     if (newPw !== newPw2) { setPwErr('새 비밀번호가 일치하지 않습니다.'); return; }
     try {
       await changePassword(newPw);

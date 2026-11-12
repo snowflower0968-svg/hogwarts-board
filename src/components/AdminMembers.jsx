@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   HOUSES, grantPoints, adminAdjustGalleon, adminGrantDigTickets, adminGrantGambleVoid,
-  adminGrantItem, adminRemoveItem, adminBulkGrant, adminBulkSetHouse, adminForgiveDebt, fetchItemsOf, fetchNotes, fetchProfileById, fetchDigRewards, fetchShopItems,
+  adminGrantItem, adminRemoveItem, adminBulkGrant, adminBulkSetHouse, adminBulkSetEra, adminForgiveDebt, fetchItemsOf, fetchNotes, fetchProfileById, fetchDigRewards, fetchShopItems,
 } from '../lib/api';
 import { fmtTime, houseName } from '../lib/helpers';
 import { Avatar, AdminCard, QtyStepper, SegTabs } from './Ui';
@@ -44,7 +44,7 @@ function CharacterList({ users, onOpen, refresh }) {
   }
   async function applyHouse() {
     if (!selected.size || !targetHouse) return;
-    if (!window.confirm(`선택한 ${selected.size}명을 "${houseName(targetHouse)}"로 변경할까요?`)) return;
+    if (!window.confirm(`선택한 ${selected.size}명을 "${houseName(targetHouse)}"로 변경하시겠습니까?`)) return;
     setBusy(true); setMsg('');
     try {
       await adminBulkSetHouse([...selected], targetHouse);
@@ -54,23 +54,48 @@ function CharacterList({ users, onOpen, refresh }) {
     } catch (e) { setMsg(e.message || '오류가 발생했습니다.'); }
     finally { setBusy(false); }
   }
+  async function applyEra(era) {
+    if (!selected.size) return;
+    const label = era === 'post' ? '회귀 후' : '회귀 전';
+    if (!window.confirm(`선택한 ${selected.size}명이 보는 자유게시판을 "${label}"로 바꾸시겠습니까?\n(기숙사 배정과는 별개입니다)`)) return;
+    setBusy(true); setMsg('');
+    try {
+      await adminBulkSetEra([...selected], era);
+      setMsg(`${selected.size}명의 자유게시판을 "${label}"로 바꿨습니다.`);
+      setSelected(new Set()); setSelectMode(false);
+      if (refresh) await refresh();
+    } catch (e) { setMsg(e.message || '오류가 발생했습니다.'); }
+    finally { setBusy(false); }
+  }
   return (
     <>
       <input className="txt-input a-search" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="이름 또는 아이디 검색" />
       <div className="log-toolbar">
         <span>{shown.length}명</span>
-        {!selectMode && <button className="select-toggle" onClick={() => setSelectMode(true)}>소속 일괄 변경</button>}
+        {!selectMode && <button className="select-toggle" onClick={() => setSelectMode(true)}>소속·자게 일괄 변경</button>}
       </div>
       {selectMode && (
         <div className="select-bar" style={{ flexWrap: 'wrap' }}>
           <span>{selected.size}명 선택</span>
           <button onClick={() => setSelected(new Set(shown.map((u) => u.id)))}>전체 선택</button>
+          <button onClick={() => { setSelectMode(false); setSelected(new Set()); setTargetHouse(''); }}>취소</button>
+        </div>
+      )}
+      {selectMode && (
+        <div className="select-bar" style={{ flexWrap: 'wrap' }}>
+          <span className="a-inline-note">기숙사 변경</span>
           <select className="house-select" value={targetHouse} onChange={(e) => setTargetHouse(e.target.value)}>
             <option value="">바꿀 소속 선택</option>
             {HOUSES.map((h) => <option key={h.id} value={h.id}>{h.name}{h.era === 'post' ? ' (회귀 후)' : ''}</option>)}
           </select>
           <button className="danger" disabled={!selected.size || !targetHouse || busy} onClick={applyHouse}>{busy ? '변경 중...' : '적용'}</button>
-          <button onClick={() => { setSelectMode(false); setSelected(new Set()); setTargetHouse(''); }}>취소</button>
+        </div>
+      )}
+      {selectMode && (
+        <div className="select-bar" style={{ flexWrap: 'wrap' }}>
+          <span className="a-inline-note">자유게시판 전환 (기숙사와 별개, 미배정이어도 가능)</span>
+          <button disabled={!selected.size || busy} onClick={() => applyEra('pre')}>회귀 전 자게로</button>
+          <button disabled={!selected.size || busy} onClick={() => applyEra('post')}>회귀 후 자게로</button>
         </div>
       )}
       {msg && <div className="auth-success a-flash">{msg}</div>}
@@ -111,7 +136,7 @@ function WithdrawModal({ user, onCancel, onConfirm }) {
   return (
     <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && !busy && onCancel()}>
       <div className="modal-card small">
-        <div className="confirm-msg"><b>{user.character_name}</b> ({user.login_id})<br />강제 탈퇴 처리할까요?<br /><span style={{ fontSize: 12, color: 'var(--text-light)' }}>이 계정은 더 이상 로그인할 수 없어요. (기록은 남아요)</span></div>
+        <div className="confirm-msg"><b>{user.character_name}</b> ({user.login_id})<br />강제 탈퇴 처리하시겠습니까?<br /><span style={{ fontSize: 12, color: 'var(--text-light)' }}>이 계정은 더 이상 로그인할 수 없습니다. (기록은 남습니다)</span></div>
         {error && <div className="auth-error">{error}</div>}
         <label className="check-line"><input type="checkbox" checked={deleteContent} onChange={(e) => setDeleteContent(e.target.checked)} /> 작성한 게시글과 댓글도 함께 삭제</label>
         <div className="modal-actions">
@@ -196,7 +221,7 @@ function CharacterDetail({ userId, allUsers, actions, onBack, onWithdraw }) {
   function apply(sign) {
     const n = Math.abs(parseInt(amount, 10) || 0);
     const m = msg.trim();
-    if (kind !== 'void' && !n) { setErr('수량을 입력하세요.'); setOk(''); return; }
+    if (kind !== 'void' && !n) { setErr('수량을 입력하십시오.'); setOk(''); return; }
     const verb = sign > 0 ? '지급' : '회수';
     const shown = kind === 'void' ? '1장' : `${n}${CUR_UNIT[kind]}`;
     const call = {
@@ -231,7 +256,7 @@ function CharacterDetail({ userId, allUsers, actions, onBack, onWithdraw }) {
       {ok && <div className="auth-success a-flash">{ok}</div>}
 
       {((prof.points || 0) < 0 || (prof.galleon || 0) < 0) && (
-        <AdminCard title="빚 무효화" hint="마이너스인 포인트·갈레온을 0으로 만들어요. 플러스인 값은 그대로예요.">
+        <AdminCard title="빚 무효화">
           <div className="a-item">
             <div className="a-item-main">
               <div className="a-item-title">
@@ -246,7 +271,7 @@ function CharacterDetail({ userId, allUsers, actions, onBack, onWithdraw }) {
       <AdminCard title="지급 · 회수">
         <SegTabs variant="sub" items={CURRENCIES} value={kind} onChange={pickKind} />
         {kind === 'void' ? (
-          <div className="a-hint" style={{ margin: '0 0 10px' }}>도박 무효권은 1장씩만 지급·회수할 수 있어요. (최대 1장 보유)</div>
+          <div className="a-hint" style={{ margin: '0 0 10px' }}>도박 무효권은 1장씩만 지급·회수할 수 있습니다. (최대 1장 보유)</div>
         ) : kind === 'ticket' ? (
           <div className="a-form-row"><QtyStepper value={amount || '1'} onChange={setAmount} max={999} /></div>
         ) : (
@@ -291,7 +316,7 @@ function CharacterDetail({ userId, allUsers, actions, onBack, onWithdraw }) {
         ))}
       </AdminCard>
 
-      <AdminCard title={`개인 기재 ${notes.length}`} hint="캐릭터가 직접 적은 항목이에요. (보기 전용)">
+      <AdminCard title={`개인 기재 ${notes.length}`}>
         {notes.length === 0 ? <div className="a-empty">적은 항목이 없습니다.</div> : notes.map((n) => (
           <div key={n.id} className="a-item">
             <div className="a-item-main">
@@ -314,13 +339,13 @@ function CharacterDetail({ userId, allUsers, actions, onBack, onWithdraw }) {
         )}
         {!isSelf && !u.withdrawn && (
           <div className="a-item">
-            <div className="a-item-main"><div className="a-item-title">관리자 권한</div><div className="a-item-sub">{u.is_admin ? '현재 관리자예요' : '일반 회원이에요'}</div></div>
+            <div className="a-item-main"><div className="a-item-title">관리자 권한</div><div className="a-item-sub">{u.is_admin ? '현재 관리자입니다' : '일반 회원입니다'}</div></div>
             <button className="a-btn accent" onClick={() => actions.toggleAdmin(u)}>{u.is_admin ? '권한 해제' : '관리자 지정'}</button>
           </div>
         )}
         {!isSelf && !u.is_admin && !u.withdrawn && (
           <div className="a-item">
-            <div className="a-item-main"><div className="a-item-title">강제 탈퇴</div><div className="a-item-sub">로그인이 막혀요. 글·댓글도 같이 지울 수 있어요.</div></div>
+            <div className="a-item-main"><div className="a-item-title">강제 탈퇴</div><div className="a-item-sub">로그인이 막힙니다. 글·댓글도 같이 지울 수 있습니다.</div></div>
             <button className="a-btn danger" onClick={() => onWithdraw(u)}>강제 탈퇴</button>
           </div>
         )}
@@ -362,10 +387,10 @@ function BulkGrant({ allUsers, refresh }) {
 
   async function send() {
     setErr(''); setOk('');
-    if (!houses.length) { setErr('기숙사를 선택하세요.'); return; }
+    if (!houses.length) { setErr('기숙사를 선택하십시오.'); return; }
     const what = kind === 'item' ? `${name.trim() || '소지품'} x${parseInt(qty, 10) || 1}` : kind === 'void' ? '도박 무효권 1장' : `${CUR_NAME[kind]} ${parseInt(amount, 10) || 0}${CUR_UNIT[kind]}`;
     const who = houses.map(houseName).join(', ');
-    if (!window.confirm(`${who} 소속 ${total}명에게\n${what}을(를) 지급할까요?`)) return;
+    if (!window.confirm(`${who} 소속 ${total}명에게\n${what}을(를) 지급하시겠습니까?`)) return;
     setBusy(true);
     try {
       const r = await adminBulkGrant(houses, kind, { amount, message: msg, name, description: desc, qty });
@@ -381,7 +406,7 @@ function BulkGrant({ allUsers, refresh }) {
     <>
       {err && <div className="auth-error a-flash">{err}</div>}
       {ok && <div className="auth-success a-flash">{ok}</div>}
-      <AdminCard title="기숙사 일괄 지급" hint="선택한 기숙사에 속한 승인된 회원 모두에게 한 번에 보상을 보내요. 기숙사가 정해지지 않은 회원은 받지 못해요.">
+      <AdminCard title="기숙사 일괄 지급">
         <div className="a-chips" style={{ marginBottom: 10 }}>
           <button type="button" className={allOn ? 'on' : ''} onClick={() => setHouses(allOn ? [] : HOUSES.map((h) => h.id))}>전체</button>
           {HOUSES.map((h) => (
@@ -390,7 +415,7 @@ function BulkGrant({ allUsers, refresh }) {
         </div>
         <SegTabs variant="sub" items={KINDS} value={kind} onChange={(k) => { setKind(k); setAmount(''); setErr(''); setOk(''); }} />
         {kind === 'void' ? (
-          <div className="a-hint" style={{ margin: '0 0 10px' }}>도박 무효권은 1장씩만 지급돼요. 이미 가진 회원은 건너뛰어요.</div>
+          <div className="a-hint" style={{ margin: '0 0 10px' }}>도박 무효권은 1장씩만 지급됩니다. 이미 가진 회원은 건너뜁니다.</div>
         ) : kind === 'item' ? (
           <>
             <input className="txt-input" style={{ width: '100%', marginBottom: 8 }} type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="소지품 이름" />

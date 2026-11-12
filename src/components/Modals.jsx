@@ -50,7 +50,7 @@ export function ComposeModal({ profile, editingPost, defaultBoard, onCancel, onS
   async function submit(e) {
     e.preventDefault();
     if (busy || loadingImages) return;
-    if (!title.trim() || !content.trim()) { setError('제목과 내용을 입력하세요.'); return; }
+    if (!title.trim() || !content.trim()) { setError('제목과 내용을 입력하십시오.'); return; }
     setBusy(true);
     try { await onSubmit(board, title.trim(), content.trim(), images, imagesChanged); }
     catch (err) { setError(err.message || '오류가 발생했습니다.'); setBusy(false); }
@@ -153,22 +153,22 @@ export function GiftModal({ balance, items = [], yachaTicket = 0, digTicket = 0,
     try {
       if (mode === 'points') {
         const amt = parseInt(amount, 10);
-        if (!amt || amt <= 0) { setError('보낼 포인트를 입력하세요.'); return; }
+        if (!amt || amt <= 0) { setError('보낼 포인트를 입력하십시오.'); return; }
         await onSendPoints(amt);
       } else if (mode === 'item') {
-        if (pickedIds.length === 0) { setError('보낼 소지품을 선택하세요.'); return; }
+        if (pickedIds.length === 0) { setError('보낼 소지품을 선택하십시오.'); return; }
         const picks = [];
         for (const id of pickedIds) {
           const it = items.find((i) => i.id === id);
           const q = parseInt(picked[id], 10);
-          if (!it || !q || q <= 0 || q > it.qty) { setError(`${it ? it.name : '소지품'}의 수량을 확인하세요.`); return; }
+          if (!it || !q || q <= 0 || q > it.qty) { setError(`${it ? it.name : '소지품'}의 수량을 확인하십시오.`); return; }
           picks.push({ id, qty: q });
         }
         await onSendItem(picks);
       } else {
         const q = parseInt(ticketQty, 10);
         const have = mode === 'yacha' ? yachaTicket : digTicket;
-        if (!q || q <= 0 || q > have) { setError('수량을 확인하세요.'); return; }
+        if (!q || q <= 0 || q > have) { setError('수량을 확인하십시오.'); return; }
         await onSendTicket(mode, q);
       }
     } catch (err) { setError(err.message || '오류가 발생했습니다.'); }
@@ -232,7 +232,7 @@ export function ItemDeleteModal({ item, onCancel, onConfirm }) {
   const { overlayClick, guard } = useCloseGuard(qty !== '1', onCancel);
   async function go() {
     const q = parseInt(qty, 10);
-    if (!q || q <= 0 || q > item.qty) { setError('수량을 확인하세요.'); return; }
+    if (!q || q <= 0 || q > item.qty) { setError('수량을 확인하십시오.'); return; }
     try { await onConfirm(item.id, q); }
     catch (err) { setError(err.message || '오류가 발생했습니다.'); }
   }

@@ -67,7 +67,7 @@ export function NotifPanel({ notifications, onOpen, onClose, onReadAll }) {
   );
 }
 
-export function Sidebar({ profile, view, currentBoard, selectBoard, openMyPage, openPersonal, openGamble, openDig, openShop, openSettings, openAdmin, hasChatUnread, boardDots = {}, mobileOpen, closeMobile }) {
+export function Sidebar({ profile, view, currentBoard, selectBoard, openMyPage, openPersonal, openGamble, openDig, openShop, openBattle, openSettings, openAdmin, hasChatUnread, boardDots = {}, mobileOpen, closeMobile }) {
   const freeBoards = BOARDS.filter((b) => b.era && !b.house && canViewBoard(profile, b.id));
   const houseBoards = BOARDS.filter((b) => b.house && canViewBoard(profile, b.id));
   const anonBoard = BOARDS.find((b) => b.id === 'anon');
@@ -101,6 +101,7 @@ export function Sidebar({ profile, view, currentBoard, selectBoard, openMyPage, 
       <div className={`sidebar-item ${view === 'gamble' ? 'active' : ''}`} onClick={() => { openGamble(); closeMobile(); }}>도박장</div>
       <div className={`sidebar-item ${view === 'dig' ? 'active' : ''}`} onClick={() => { openDig(); closeMobile(); }}>간이 조사</div>
       <div className={`sidebar-item ${view === 'shop' ? 'active' : ''}`} onClick={() => { openShop(); closeMobile(); }}>상점</div>
+      <div className={`sidebar-item ${view === 'battle' ? 'active' : ''}`} onClick={() => { openBattle(); closeMobile(); }}>전투</div>
       <div className={`sidebar-item ${view === 'settings' ? 'active' : ''}`} onClick={() => { openSettings(); closeMobile(); }}>설정</div>
       {profile.is_admin && (
         <div className={`sidebar-item ${view === 'admin' ? 'active' : ''}`} onClick={() => { openAdmin(); closeMobile(); }}>관리자 페이지</div>
